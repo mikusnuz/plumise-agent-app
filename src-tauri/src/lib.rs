@@ -12,6 +12,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(agent_state)
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

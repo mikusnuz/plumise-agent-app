@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import TitleBar from './components/layout/TitleBar';
 import Sidebar from './components/layout/Sidebar';
+import UpdateChecker from './components/UpdateChecker';
 import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
@@ -28,6 +29,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-full rounded-xl overflow-hidden border border-[var(--border-divider)]">
       <TitleBar />
+      <UpdateChecker />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar status={status} />
         <Routes>

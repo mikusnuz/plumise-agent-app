@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout plumise-agent-app
+        uses: actions/checkout@v4
+
+      - name: Checkout plumise-agent
+        uses: actions/checkout@v4
+        with:
+          repository: mikusnuz/plumise-agent
+          path: agent-src
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r agent-src/requirements.txt
+          pip install pyinstaller
+
+      - name: Build plumise-agent.exe with PyInstaller
+        run: pyinstaller agent-src/plumise-agent.spec
+
+      - name: Copy agent binary to Tauri binaries
+        run: |
+          New-Item -Path "src-tauri/binaries" -ItemType Directory -Force
+          Copy-Item "dist/plumise-agent.exe" "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe"
+        shell: pwsh
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Tauri app
+        run: npx tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

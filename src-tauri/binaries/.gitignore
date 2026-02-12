@@ -1,0 +1,7 @@
+# Ignore all binaries
+*
+
+# Keep these files
+!README.md
+!.gitignore
+!plumise-agent-x86_64-apple-darwin

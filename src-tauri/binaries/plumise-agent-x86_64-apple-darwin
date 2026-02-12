@@ -1,0 +1,3 @@
+#!/bin/bash
+# Dev mode wrapper - calls system plumise-agent
+exec plumise-agent "$@"

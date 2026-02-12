@@ -8,8 +8,6 @@ interface ProcessControlProps {
 }
 
 export default function ProcessControl({ status, onStart, onStop }: ProcessControlProps) {
-  const isLoading = status === 'starting' || status === 'stopping';
-
   return (
     <div className="glass-card p-5">
       <div className="flex items-center justify-between">

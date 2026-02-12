@@ -455,7 +455,32 @@ pub async fn preflight_check(config: AgentConfig) -> Result<PreflightResult, Str
         },
     });
 
-    // 4. Port availability
+    // 4. Wallet address & balance info (gas is Oracle-sponsored, 0 PLM is OK)
+    if pk_valid {
+        let balance_result = check_wallet_balance(&client, &config.chain_rpc, &config.private_key).await;
+        match balance_result {
+            Ok((balance_plm, address)) => {
+                checks.push(PreflightCheck {
+                    name: "Wallet".to_string(),
+                    passed: true,
+                    message: if balance_plm > 0.0 {
+                        format!("{}: {:.4} PLM", address, balance_plm)
+                    } else {
+                        format!("{}: 0 PLM (OK — gas is sponsored by Oracle)", address)
+                    },
+                });
+            }
+            Err(e) => {
+                checks.push(PreflightCheck {
+                    name: "Wallet".to_string(),
+                    passed: true,
+                    message: format!("Address derived, balance check skipped: {}", e),
+                });
+            }
+        }
+    }
+
+    // 5. Port availability
     let port_free = std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
     checks.push(PreflightCheck {
         name: "Port".to_string(),
@@ -483,6 +508,66 @@ struct LogEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AgentStatusEvent {
     status: AgentStatus,
+}
+
+/// Derive Ethereum address from private key and check on-chain balance
+async fn check_wallet_balance(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    private_key: &str,
+) -> Result<(f64, String), String> {
+    // Derive address from private key using keccak256
+    let pk_hex = private_key.strip_prefix("0x").unwrap_or(private_key);
+    let pk_bytes = hex::decode(pk_hex).map_err(|e| format!("Invalid private key hex: {}", e))?;
+
+    let secret_key = k256::ecdsa::SigningKey::from_bytes((&pk_bytes[..]).into())
+        .map_err(|e| format!("Invalid private key: {}", e))?;
+    let public_key = secret_key.verifying_key();
+    let public_key_bytes = public_key.to_encoded_point(false);
+    // Skip the 0x04 prefix byte, hash the remaining 64 bytes
+    let hash = sha3_keccak256(&public_key_bytes.as_bytes()[1..]);
+    let address = format!("0x{}", hex::encode(&hash[12..]));
+
+    // eth_getBalance RPC call
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getBalance",
+        "params": [&address, "latest"],
+        "id": 1
+    });
+
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC request failed: {}", e))?;
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("RPC response parse error: {}", e))?;
+
+    let balance_hex = json["result"]
+        .as_str()
+        .ok_or("No balance in RPC response")?;
+
+    let balance_hex = balance_hex.strip_prefix("0x").unwrap_or(balance_hex);
+    let balance_wei = u128::from_str_radix(balance_hex, 16).unwrap_or(0);
+    let balance_plm = balance_wei as f64 / 1e18;
+
+    Ok((balance_plm, address))
+}
+
+/// Simple Keccak-256 hash (no external crate dependency, uses sha3)
+fn sha3_keccak256(data: &[u8]) -> [u8; 32] {
+    use sha3::{Digest, Keccak256};
+    let mut hasher = Keccak256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    let mut output = [0u8; 32];
+    output.copy_from_slice(&result);
+    output
 }
 
 fn parse_log_level(line: &str) -> &str {

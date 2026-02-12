@@ -25,7 +25,7 @@ export function useSystemInfo(enabled: boolean) {
 
     const fetchSystemInfo = async () => {
       try {
-        const info = await invoke<SystemInfo>('get_system_info');
+        const info = await invoke('get_system_info') as SystemInfo;
         if (isMounted) {
           setSystemInfo(info);
         }

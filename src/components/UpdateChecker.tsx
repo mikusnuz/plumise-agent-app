@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { check as checkUpdate } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { Download, AlertCircle, X } from 'lucide-react';
 
 interface UpdateInfo {
@@ -55,15 +54,19 @@ export default function UpdateChecker() {
         return;
       }
 
+      let totalBytes = 0;
+      let downloadedBytes = 0;
       await update.downloadAndInstall((event) => {
         switch (event.event) {
           case 'Started':
+            totalBytes = (event.data as any).contentLength ?? 0;
+            downloadedBytes = 0;
             setDownloadProgress(0);
             break;
           case 'Progress':
-            if (event.data.chunkLength && event.data.contentLength) {
-              const progress = (event.data.chunkLength / event.data.contentLength) * 100;
-              setDownloadProgress(progress);
+            downloadedBytes += event.data.chunkLength;
+            if (totalBytes > 0) {
+              setDownloadProgress((downloadedBytes / totalBytes) * 100);
             }
             break;
           case 'Finished':
@@ -72,7 +75,9 @@ export default function UpdateChecker() {
         }
       });
 
-      await relaunch();
+      // Relaunch after install
+      const { relaunch: doRelaunch } = await import('@tauri-apps/plugin-process');
+      await doRelaunch();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Installation failed';
       console.error('[UpdateChecker] Installation error:', message);

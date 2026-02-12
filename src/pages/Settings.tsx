@@ -18,7 +18,7 @@ async function loadConfig(): Promise<AgentConfig> {
   // Try Tauri first
   if (invoke) {
     try {
-      const config = await invoke<AgentConfig>('load_config');
+      const config = await invoke('load_config') as AgentConfig;
       return { ...DEFAULT_CONFIG, ...config };
     } catch {
       // Fall back to default if load fails

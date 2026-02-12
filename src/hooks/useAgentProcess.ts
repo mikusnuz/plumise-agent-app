@@ -33,7 +33,7 @@ export function useAgentProcess() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<number | null>(null);
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     const entry: LogEntry = {
@@ -49,9 +49,9 @@ export function useAgentProcess() {
   }, []);
 
   const startPolling = useCallback((port: number) => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    if (pollRef.current !== null) clearInterval(pollRef.current);
 
-    pollRef.current = setInterval(async () => {
+    pollRef.current = window.setInterval(async () => {
       try {
         const [healthRes, metricsRes] = await Promise.all([
           fetch(`http://localhost:${port}/health`),
@@ -83,9 +83,9 @@ export function useAgentProcess() {
   }, []);
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current) {
+    if (pollRef.current !== null) {
       clearInterval(pollRef.current);
-      pollRef.current = undefined;
+      pollRef.current = null;
     }
   }, []);
 
@@ -101,7 +101,7 @@ export function useAgentProcess() {
       // Run pre-flight checks (Tauri only)
       if (invoke) {
         addLog('INFO', 'Running pre-flight checks...');
-        const result = await invoke<{ passed: boolean; checks: Array<{ name: string; passed: boolean; message: string }> }>('preflight_check', { config });
+        const result = await invoke('preflight_check', { config }) as { passed: boolean; checks: Array<{ name: string; passed: boolean; message: string }> };
 
         for (const check of result.checks) {
           addLog(check.passed ? 'INFO' : 'ERROR', `[${check.name}] ${check.message}`);

@@ -15,6 +15,16 @@ function formatElapsed(seconds: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+// Estimated loading steps with time-based progress
+function getProgressInfo(elapsed: number): { percent: number; step: string } {
+  if (elapsed < 3) return { percent: 5, step: 'Running pre-flight checks...' };
+  if (elapsed < 8) return { percent: 10, step: 'Launching agent process...' };
+  if (elapsed < 15) return { percent: 15, step: 'Initializing model runtime...' };
+  if (elapsed < 30) return { percent: 20 + Math.min((elapsed - 15) * 2, 30), step: 'Downloading model weights...' };
+  if (elapsed < 120) return { percent: 50 + Math.min((elapsed - 30) * 0.4, 40), step: 'Loading model into memory...' };
+  return { percent: Math.min(90 + (elapsed - 120) * 0.05, 98), step: 'Finalizing model setup...' };
+}
+
 export default function ProcessControl({ status, hasPrivateKey, onStart, onStop }: ProcessControlProps) {
   const canStart = (status === 'stopped' || status === 'error') && hasPrivateKey;
   const [elapsed, setElapsed] = useState(0);
@@ -39,17 +49,18 @@ export default function ProcessControl({ status, hasPrivateKey, onStart, onStop 
     };
   }, [status]);
 
+  const progress = status === 'starting' ? getProgressInfo(elapsed) : null;
+
   return (
     <div className="glass-card p-5">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">Agent Process</h3>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">
             {status === 'running' && 'Agent is running and processing requests'}
-            {status === 'starting' && (
+            {status === 'starting' && progress && (
               <span className="text-cyan-400">
-                Loading model... {formatElapsed(elapsed)}
-                {elapsed > 30 && ' — first load can take several minutes'}
+                {progress.step} ({formatElapsed(elapsed)})
               </span>
             )}
             {status === 'stopping' && 'Gracefully shutting down...'}
@@ -64,7 +75,7 @@ export default function ProcessControl({ status, hasPrivateKey, onStart, onStop 
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {status === 'stopped' || status === 'error' ? (
             <button
               className="btn-primary flex items-center gap-2"
@@ -88,6 +99,25 @@ export default function ProcessControl({ status, hasPrivateKey, onStart, onStop 
           )}
         </div>
       </div>
+
+      {/* Progress bar during starting */}
+      {status === 'starting' && progress && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between text-[10px] text-[var(--text-dim)] mb-1">
+            <span>{progress.step}</span>
+            <span>{Math.round(progress.percent)}%</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-[var(--bg-elevated)] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500"
+              style={{
+                width: `${progress.percent}%`,
+                transition: 'width 1s ease-out',
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

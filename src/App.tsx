@@ -32,9 +32,16 @@ export default function App() {
     addLog('INFO', '--- Logs cleared ---');
   }, [addLog]);
 
+  // Stop agent before closing the app window
+  const handleBeforeClose = useCallback(async () => {
+    if (status === 'running' || status === 'starting') {
+      await stop();
+    }
+  }, [status, stop]);
+
   return (
     <div className="flex flex-col h-full rounded-xl overflow-hidden border border-[var(--border-divider)]">
-      <TitleBar />
+      <TitleBar onBeforeClose={handleBeforeClose} />
       <UpdateChecker />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar status={status} />

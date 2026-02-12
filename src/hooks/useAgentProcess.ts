@@ -5,7 +5,7 @@ import type { AgentStatus, AgentConfig, LogEntry, AgentMetrics, AgentHealth } fr
 let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
 let listenPromise: Promise<typeof import('@tauri-apps/api/event')['listen']> | null = null;
 
-if (typeof window !== 'undefined' && '__TAURI__' in window) {
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
   invokePromise = import('@tauri-apps/api/core').then((mod) => mod.invoke);
   listenPromise = import('@tauri-apps/api/event').then((mod) => mod.listen);
 }

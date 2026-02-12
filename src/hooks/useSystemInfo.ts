@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import type { SystemInfo } from '../types';
 
-let invoke: any = null;
+// --- Tauri API loading (awaitable) ---
+let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
 
-// Dynamically import Tauri API if available
-if (typeof window !== 'undefined' && '__TAURI__' in window) {
-  import('@tauri-apps/api/core').then((mod) => {
-    invoke = mod.invoke;
-  });
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  invokePromise = import('@tauri-apps/api/core').then((mod) => mod.invoke);
+}
+
+async function getInvoke() {
+  if (!invokePromise) return null;
+  try { return await invokePromise; } catch { return null; }
 }
 
 const POLL_INTERVAL = 2000; // 2 seconds
@@ -16,7 +19,7 @@ export function useSystemInfo(enabled: boolean) {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
-    if (!enabled || !invoke) {
+    if (!enabled) {
       setSystemInfo(null);
       return;
     }
@@ -24,6 +27,9 @@ export function useSystemInfo(enabled: boolean) {
     let isMounted = true;
 
     const fetchSystemInfo = async () => {
+      const invoke = await getInvoke();
+      if (!invoke || !isMounted) return;
+
       try {
         const info = await invoke('get_system_info') as SystemInfo;
         if (isMounted) {

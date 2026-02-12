@@ -16,7 +16,7 @@ export default function UpdateChecker() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !('__TAURI__' in window)) {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
       return;
     }
 
@@ -86,7 +86,7 @@ export default function UpdateChecker() {
     }
   };
 
-  if (typeof window === 'undefined' || !('__TAURI__' in window)) {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
     return null;
   }
 

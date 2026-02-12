@@ -5,23 +5,25 @@ import { DEFAULT_CONFIG } from '../types';
 
 const STORAGE_KEY = 'plumise-agent-config';
 
-let invoke: any = null;
+// --- Tauri API loading (awaitable) ---
+let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
 
-// Dynamically import Tauri API if available
-if (typeof window !== 'undefined' && '__TAURI__' in window) {
-  import('@tauri-apps/api/core').then((mod) => {
-    invoke = mod.invoke;
-  });
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  invokePromise = import('@tauri-apps/api/core').then((mod) => mod.invoke);
+}
+
+async function getInvoke() {
+  if (!invokePromise) return null;
+  try { return await invokePromise; } catch { return null; }
 }
 
 async function loadConfig(): Promise<AgentConfig> {
-  // Try Tauri first
+  const invoke = await getInvoke();
   if (invoke) {
     try {
       const config = await invoke('load_config') as AgentConfig;
       return { ...DEFAULT_CONFIG, ...config };
     } catch {
-      // Fall back to default if load fails
       return { ...DEFAULT_CONFIG };
     }
   }
@@ -35,7 +37,7 @@ async function loadConfig(): Promise<AgentConfig> {
 }
 
 async function saveConfig(config: AgentConfig) {
-  // Try Tauri first
+  const invoke = await getInvoke();
   if (invoke) {
     try {
       await invoke('save_config', { config });
@@ -146,7 +148,14 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 className="input-field pr-10 font-mono text-xs"
                 placeholder="0x..."
                 value={config.privateKey}
-                onChange={(e) => update('privateKey', e.target.value)}
+                onChange={(e) => {
+                  let val = e.target.value.trim();
+                  // Auto-add 0x prefix if user pastes a raw hex key
+                  if (val.length === 64 && /^[0-9a-fA-F]+$/.test(val)) {
+                    val = '0x' + val;
+                  }
+                  update('privateKey', val);
+                }}
                 disabled={isRunning}
               />
               <button

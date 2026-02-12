@@ -1,11 +1,32 @@
 import { useState, useEffect } from 'react';
-import { Save, Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { Save, Eye, EyeOff, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import type { AgentConfig, AgentStatus } from '../types';
 import { DEFAULT_CONFIG } from '../types';
 
 const STORAGE_KEY = 'plumise-agent-config';
 
-function loadConfig(): AgentConfig {
+let invoke: any = null;
+
+// Dynamically import Tauri API if available
+if (typeof window !== 'undefined' && '__TAURI__' in window) {
+  import('@tauri-apps/api/core').then((mod) => {
+    invoke = mod.invoke;
+  });
+}
+
+async function loadConfig(): Promise<AgentConfig> {
+  // Try Tauri first
+  if (invoke) {
+    try {
+      const config = await invoke<AgentConfig>('load_config');
+      return { ...DEFAULT_CONFIG, ...config };
+    } catch {
+      // Fall back to default if load fails
+      return { ...DEFAULT_CONFIG };
+    }
+  }
+
+  // Browser fallback: localStorage
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
@@ -13,8 +34,22 @@ function loadConfig(): AgentConfig {
   return { ...DEFAULT_CONFIG };
 }
 
-function saveConfig(config: AgentConfig) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+async function saveConfig(config: AgentConfig) {
+  // Try Tauri first
+  if (invoke) {
+    try {
+      await invoke('save_config', { config });
+    } catch (err) {
+      console.error('Failed to save config via Tauri:', err);
+    }
+  }
+
+  // Always save to localStorage as fallback
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  } catch (err) {
+    console.error('Failed to save config to localStorage:', err);
+  }
 }
 
 interface SettingsProps {
@@ -23,15 +58,33 @@ interface SettingsProps {
 }
 
 export default function Settings({ status, onConfigChange }: SettingsProps) {
-  const [config, setConfig] = useState<AgentConfig>(loadConfig);
+  const [config, setConfig] = useState<AgentConfig>(DEFAULT_CONFIG);
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const isRunning = status === 'running' || status === 'starting';
 
+  // Load config on mount
   useEffect(() => {
-    onConfigChange(config);
+    loadConfig().then((loaded) => {
+      setConfig(loaded);
+      onConfigChange(loaded);
+      setIsLoading(false);
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save on config changes (debounced)
+  useEffect(() => {
+    if (isLoading) return;
+
+    const timer = setTimeout(() => {
+      saveConfig(config);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [config, isLoading]);
 
   const handleSave = () => {
     saveConfig(config);
@@ -161,65 +214,63 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
           </div>
         </section>
 
-        {/* Network */}
+        {/* Advanced */}
         <section className="glass-card p-5 space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Network</h3>
+          <button
+            className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)] w-full"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Advanced
+          </button>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                Oracle URL
-              </label>
-              <input
-                type="text"
-                className="input-field text-xs"
-                value={config.oracleUrl}
-                onChange={(e) => update('oracleUrl', e.target.value)}
-                disabled={isRunning}
-              />
-            </div>
+          {showAdvanced && (
+            <div className="space-y-4 pt-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                    Oracle URL
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field text-xs"
+                    value={config.oracleUrl}
+                    onChange={(e) => update('oracleUrl', e.target.value)}
+                    disabled={isRunning}
+                  />
+                </div>
 
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                Chain RPC
-              </label>
-              <input
-                type="text"
-                className="input-field text-xs"
-                value={config.chainRpc}
-                onChange={(e) => update('chainRpc', e.target.value)}
-                disabled={isRunning}
-              />
-            </div>
-          </div>
+                <div>
+                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                    Chain RPC
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field text-xs"
+                    value={config.chainRpc}
+                    onChange={(e) => update('chainRpc', e.target.value)}
+                    disabled={isRunning}
+                  />
+                </div>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                HTTP Port
-              </label>
-              <input
-                type="number"
-                className="input-field w-32"
-                value={config.httpPort}
-                onChange={(e) => update('httpPort', parseInt(e.target.value) || 8080)}
-                disabled={isRunning}
-              />
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                  HTTP Port
+                </label>
+                <input
+                  type="number"
+                  className="input-field w-32"
+                  value={config.httpPort}
+                  onChange={(e) => update('httpPort', parseInt(e.target.value) || 8080)}
+                  disabled={isRunning}
+                />
+                <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                  Local port for agent health monitoring
+                </p>
+              </div>
             </div>
-
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                gRPC Port
-              </label>
-              <input
-                type="number"
-                className="input-field w-32"
-                value={config.grpcPort}
-                onChange={(e) => update('grpcPort', parseInt(e.target.value) || 50051)}
-                disabled={isRunning}
-              />
-            </div>
-          </div>
+          )}
         </section>
       </div>
     </div>

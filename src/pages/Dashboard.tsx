@@ -9,6 +9,7 @@ import StatCard from '../components/dashboard/StatCard';
 import GaugeRing from '../components/dashboard/GaugeRing';
 import ProcessControl from '../components/dashboard/ProcessControl';
 import type { AgentStatus, AgentMetrics, AgentHealth, LogEntry } from '../types';
+import { useSystemInfo } from '../hooks/useSystemInfo';
 
 interface DashboardProps {
   status: AgentStatus;
@@ -45,9 +46,16 @@ function generateMockChartData() {
 export default function Dashboard({ status, metrics, health, logs, onStart, onStop }: DashboardProps) {
   const chartData = useMemo(generateMockChartData, []);
 
-  // Mock system info — in production, from Tauri sysinfo command
-  const ramPercent = 0;
-  const vramPercent = 0;
+  // Fetch system info when agent is running
+  const { systemInfo } = useSystemInfo(status === 'running' || status === 'starting');
+
+  // Calculate resource usage percentages
+  const ramPercent = systemInfo && systemInfo.ramTotal > 0
+    ? Math.round((systemInfo.ramUsed / systemInfo.ramTotal) * 100)
+    : 0;
+  const vramPercent = systemInfo && systemInfo.vramTotal > 0
+    ? Math.round((systemInfo.vramUsed / systemInfo.vramTotal) * 100)
+    : 0;
 
   const recentLogs = logs.slice(-8);
 
@@ -143,7 +151,7 @@ export default function Dashboard({ status, metrics, health, logs, onStart, onSt
             <GaugeRing
               value={ramPercent}
               label="RAM"
-              detail={status === 'running' ? `${health?.layers ?? '?'}` : 'Idle'}
+              detail={status === 'running' ? (health?.layers ? `L${health.layers.start}-${health.layers.end}` : 'All') : 'Idle'}
               color="#06b6d4"
               size={90}
             />

@@ -14,7 +14,7 @@ export interface AgentHealth {
   mode: string;
   address: string;
   uptime: number;
-  layers: string;
+  layers?: { start: number; end: number; total: number };
 }
 
 export interface SystemInfo {
@@ -50,6 +50,6 @@ export const DEFAULT_CONFIG: AgentConfig = {
   oracleUrl: 'https://node-1.plumise.com/oracle',
   chainRpc: 'https://node-1.plumise.com/rpc',
   httpPort: 8080,
-  grpcPort: 50051,
+  grpcPort: 0, // standalone mode: gRPC disabled
   ramLimitMb: 0,
 };

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
-import { ArrowDown, Trash2, Search } from 'lucide-react';
+import { ArrowDown, Trash2, Search, Download } from 'lucide-react';
 import type { LogEntry } from '../types';
 
 interface LogsProps {
@@ -77,6 +77,24 @@ export default function Logs({ logs, onClear }: LogsProps) {
           <span className="text-[10px] text-[var(--text-dim)]">
             {filteredLogs.length} / {logs.length}
           </span>
+          <button
+            className="p-1.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-muted)]"
+            onClick={() => {
+              const text = logs
+                .map((l) => `[${l.timestamp}] [${l.level}] ${l.message}`)
+                .join('\n');
+              const blob = new Blob([text], { type: 'text/plain' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `plumise-agent-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            title="Export logs"
+          >
+            <Download size={14} />
+          </button>
           <button
             className="p-1.5 rounded hover:bg-[var(--bg-elevated)] text-[var(--text-muted)]"
             onClick={onClear}

@@ -1,73 +1,80 @@
-# React + TypeScript + Vite
+# Plumise Agent
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Desktop application for running a Plumise network inference agent. One-click setup to contribute your GPU/CPU computing power to the Plumise decentralized inference network and earn PLM rewards.
 
-Currently, two official plugins are available:
+## Features
+- One-click agent management (start/stop)
+- Real-time system monitoring (CPU, RAM, VRAM)
+- Live inference metrics (requests, tokens, latency)
+- Automatic pre-flight checks before launch
+- Real-time log viewer with search, filter, and export
+- Auto-updates via built-in updater
+- Modern glassmorphism UI
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Download
+Download the latest installer from [GitHub Releases](https://github.com/mikusnuz/plumise-agent-app/releases).
+- Windows: `.msi` or `.exe` (NSIS) installer
 
-## React Compiler
+## Quick Start
+1. Download and install the latest release
+2. Open Plumise Agent
+3. Go to Settings → Enter your private key (0x...)
+4. Click "Start" on the Dashboard
+5. Monitor your agent's performance and rewards
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Building from Source
 
-## Expanding the ESLint configuration
+### Prerequisites
+- Node.js 20+
+- Rust 1.77+
+- Python 3.11+ (for building the agent sidecar)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Steps
+```bash
+# Clone the repository
+git clone https://github.com/mikusnuz/plumise-agent-app.git
+cd plumise-agent-app
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+# Install frontend dependencies
+npm install
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+# Development mode (requires plumise-agent on system PATH)
+npm run tauri:dev
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Production build (requires sidecar binary)
+npm run tauri:build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### Building the Sidecar
+```bash
+git clone https://github.com/mikusnuz/plumise-agent.git
+cd plumise-agent
+pip install -r requirements.txt pyinstaller
+pyinstaller plumise-agent.spec
+# Copy dist/plumise-agent.exe to plumise-agent-app/src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe
 ```
+
+## Architecture
+- **Shell**: Tauri v2 (Rust + WebView)
+- **Frontend**: React + TypeScript + Tailwind CSS v4 + Recharts
+- **Agent**: PyInstaller-bundled [plumise-agent](https://github.com/mikusnuz/plumise-agent) (sidecar)
+- **Chain**: [Plumise Network](https://plumise.com) (EVM-compatible)
+
+## Tech Stack
+| Component | Technology |
+|-----------|-----------|
+| Desktop Shell | Tauri v2 |
+| Frontend | React 19, TypeScript, Tailwind v4 |
+| Charts | Recharts |
+| Animations | motion/react |
+| Backend | Rust (tokio, reqwest, sysinfo) |
+| Agent | Python (PyTorch, gRPC, Web3) |
+| Build | PyInstaller, GitHub Actions |
+
+## License
+MIT
+
+## Links
+- [Plumise Chain](https://plumise.com)
+- [Plumise Explorer](https://explorer.plumise.com)
+- [Plumise Agent](https://github.com/mikusnuz/plumise-agent)

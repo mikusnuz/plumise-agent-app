@@ -1,17 +1,23 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AgentStatus, AgentConfig, LogEntry, AgentMetrics, AgentHealth } from '../types';
 
-let invoke: any = null;
-let listen: any = null;
+// --- Tauri API loading (awaitable) ---
+let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
+let listenPromise: Promise<typeof import('@tauri-apps/api/event')['listen']> | null = null;
 
-// Dynamically import Tauri APIs if available (desktop mode)
 if (typeof window !== 'undefined' && '__TAURI__' in window) {
-  import('@tauri-apps/api/core').then((mod) => {
-    invoke = mod.invoke;
-  });
-  import('@tauri-apps/api/event').then((mod) => {
-    listen = mod.listen;
-  });
+  invokePromise = import('@tauri-apps/api/core').then((mod) => mod.invoke);
+  listenPromise = import('@tauri-apps/api/event').then((mod) => mod.listen);
+}
+
+async function getInvoke() {
+  if (!invokePromise) return null;
+  try { return await invokePromise; } catch { return null; }
+}
+
+async function getListen() {
+  if (!listenPromise) return null;
+  try { return await listenPromise; } catch { return null; }
 }
 
 const EMPTY_METRICS: AgentMetrics = {
@@ -24,8 +30,6 @@ const EMPTY_METRICS: AgentMetrics = {
 
 /**
  * Main hook for managing the agent process lifecycle.
- * In Tauri production, this will invoke Rust commands.
- * For now, it mocks the process with HTTP polling.
  */
 export function useAgentProcess() {
   const [status, setStatus] = useState<AgentStatus>('stopped');
@@ -34,6 +38,8 @@ export function useAgentProcess() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
   const pollRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+  const elapsedRef = useRef<number | null>(null);
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     const entry: LogEntry = {
@@ -51,7 +57,20 @@ export function useAgentProcess() {
   const startPolling = useCallback((port: number) => {
     if (pollRef.current !== null) clearInterval(pollRef.current);
 
+    let pollCount = 0;
+
     pollRef.current = window.setInterval(async () => {
+      pollCount++;
+
+      // Show elapsed time every 10 polls (~30s)
+      if (startTimeRef.current && pollCount % 10 === 0) {
+        const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000);
+        elapsedRef.current = elapsed;
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        addLog('INFO', `Still loading... (${mins}m ${secs}s elapsed)`);
+      }
+
       try {
         const [healthRes, metricsRes] = await Promise.all([
           fetch(`http://localhost:${port}/health`),
@@ -63,6 +82,7 @@ export function useAgentProcess() {
           setHealth(h);
           if (h.status === 'ok' || h.status === 'ready') {
             setStatus('running');
+            startTimeRef.current = null;
           }
         }
 
@@ -80,19 +100,21 @@ export function useAgentProcess() {
         // Agent not ready yet, keep polling
       }
     }, 3000);
-  }, []);
+  }, [addLog]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    startTimeRef.current = null;
+    elapsedRef.current = null;
   }, []);
 
   const start = useCallback(async (config: AgentConfig) => {
     if (status === 'running' || status === 'starting') return;
 
-    // Frontend-level validation (works even if Tauri invoke isn't ready)
+    // Frontend-level validation
     if (!config.privateKey || config.privateKey.trim() === '') {
       setStatus('error');
       addLog('ERROR', 'Private key is required. Go to Settings to configure it.');
@@ -108,12 +130,19 @@ export function useAgentProcess() {
     setLogs([]);
     setMetrics(EMPTY_METRICS);
     setHealth(null);
+    startTimeRef.current = Date.now();
+
+    // Await Tauri invoke (resolves immediately if already loaded)
+    const invoke = await getInvoke();
 
     try {
-      // Run pre-flight checks (Tauri only)
       if (invoke) {
+        // --- Tauri desktop mode ---
         addLog('INFO', 'Running pre-flight checks...');
-        const result = await invoke('preflight_check', { config }) as { passed: boolean; checks: Array<{ name: string; passed: boolean; message: string }> };
+        const result = await invoke('preflight_check', { config }) as {
+          passed: boolean;
+          checks: Array<{ name: string; passed: boolean; message: string }>;
+        };
 
         for (const check of result.checks) {
           addLog(check.passed ? 'INFO' : 'ERROR', `[${check.name}] ${check.message}`);
@@ -122,27 +151,30 @@ export function useAgentProcess() {
         if (!result.passed) {
           setStatus('error');
           addLog('ERROR', 'Pre-flight checks failed. Fix the issues above and try again.');
+          startTimeRef.current = null;
           return;
         }
         addLog('INFO', 'All pre-flight checks passed');
-      }
 
-      addLog('INFO', `Starting agent with model: ${config.model}`);
-      addLog('INFO', `Device: ${config.device}, Mode: standalone`);
+        addLog('INFO', `Starting agent with model: ${config.model}`);
+        addLog('INFO', `Device: ${config.device}, Mode: standalone`);
 
-      if (invoke) {
         await invoke('start_agent', { config });
-        addLog('INFO', 'Agent process launched');
+        addLog('INFO', 'Agent process launched — loading model (this may take several minutes)...');
       } else {
-        addLog('INFO', 'Agent process launched (mock)');
-        addLog('INFO', 'Waiting for model to load...');
+        // --- Browser fallback (no Tauri) ---
+        addLog('WARNING', 'Tauri API not available — running in browser mock mode');
+        addLog('INFO', `Starting agent with model: ${config.model}`);
+        addLog('INFO', `Device: ${config.device}, Mode: standalone`);
+        addLog('INFO', 'Waiting for agent HTTP server...');
       }
 
-      // Start polling the agent's HTTP API (source of truth for metrics)
+      // Start polling the agent's HTTP API
       startPolling(config.httpPort);
     } catch (err) {
       setStatus('error');
       addLog('ERROR', `Failed to start agent: ${err}`);
+      startTimeRef.current = null;
     }
   }, [status, addLog, startPolling]);
 
@@ -153,13 +185,13 @@ export function useAgentProcess() {
     addLog('INFO', 'Stopping agent...');
     stopPolling();
 
+    const invoke = await getInvoke();
+
     try {
       if (invoke) {
-        // Tauri desktop mode
         await invoke('stop_agent');
-        addLog('INFO', 'Agent stopped via Tauri');
+        addLog('INFO', 'Agent stopped');
       } else {
-        // Browser fallback mode
         addLog('INFO', 'Agent stopped (mock)');
       }
       setStatus('stopped');
@@ -174,9 +206,10 @@ export function useAgentProcess() {
     let unlistenLog: (() => void) | null = null;
     let unlistenStatus: (() => void) | null = null;
 
-    // Set up Tauri event listeners if available
-    if (listen) {
-      // Listen for agent-log events
+    // Set up Tauri event listeners
+    getListen().then((listen) => {
+      if (!listen) return;
+
       listen('agent-log', (event: any) => {
         const { level, message } = event.payload;
         addLog(level, message);
@@ -184,10 +217,8 @@ export function useAgentProcess() {
         unlistenLog = unlisten;
       });
 
-      // Listen for agent-status events (emitted by Rust backend)
       listen('agent-status', (event: any) => {
         const { status: newStatus } = event.payload;
-        // Map Rust enum (PascalCase) to frontend lowercase
         const mapped = typeof newStatus === 'string'
           ? (newStatus.toLowerCase() as AgentStatus)
           : newStatus;
@@ -195,7 +226,7 @@ export function useAgentProcess() {
       }).then((unlisten: () => void) => {
         unlistenStatus = unlisten;
       });
-    }
+    });
 
     return () => {
       stopPolling();

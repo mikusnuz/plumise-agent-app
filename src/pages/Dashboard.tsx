@@ -16,6 +16,7 @@ interface DashboardProps {
   metrics: AgentMetrics;
   health: AgentHealth | null;
   logs: LogEntry[];
+  hasPrivateKey: boolean;
   onStart: () => void;
   onStop: () => void;
 }
@@ -43,7 +44,7 @@ function generateMockChartData() {
   }));
 }
 
-export default function Dashboard({ status, metrics, health, logs, onStart, onStop }: DashboardProps) {
+export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, onStart, onStop }: DashboardProps) {
   const chartData = useMemo(generateMockChartData, []);
 
   // Fetch system info when agent is running
@@ -62,7 +63,7 @@ export default function Dashboard({ status, metrics, health, logs, onStart, onSt
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
       {/* Process Control */}
-      <ProcessControl status={status} onStart={onStart} onStop={onStop} />
+      <ProcessControl status={status} hasPrivateKey={hasPrivateKey} onStart={onStart} onStop={onStop} />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-4 gap-4">

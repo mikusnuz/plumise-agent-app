@@ -1,13 +1,16 @@
-import { Play, Square, Loader2 } from 'lucide-react';
+import { Play, Square, Loader2, AlertTriangle } from 'lucide-react';
 import type { AgentStatus } from '../../types';
 
 interface ProcessControlProps {
   status: AgentStatus;
+  hasPrivateKey: boolean;
   onStart: () => void;
   onStop: () => void;
 }
 
-export default function ProcessControl({ status, onStart, onStop }: ProcessControlProps) {
+export default function ProcessControl({ status, hasPrivateKey, onStart, onStop }: ProcessControlProps) {
+  const canStart = (status === 'stopped' || status === 'error') && hasPrivateKey;
+
   return (
     <div className="glass-card p-5">
       <div className="flex items-center justify-between">
@@ -17,14 +20,25 @@ export default function ProcessControl({ status, onStart, onStop }: ProcessContr
             {status === 'running' && 'Agent is running and processing requests'}
             {status === 'starting' && 'Loading model and connecting to network...'}
             {status === 'stopping' && 'Gracefully shutting down...'}
-            {status === 'stopped' && 'Agent is not running'}
+            {status === 'stopped' && !hasPrivateKey && (
+              <span className="text-amber-400 flex items-center gap-1">
+                <AlertTriangle size={12} />
+                Set your private key in Settings before starting
+              </span>
+            )}
+            {status === 'stopped' && hasPrivateKey && 'Agent is not running'}
             {status === 'error' && 'Agent encountered an error'}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           {status === 'stopped' || status === 'error' ? (
-            <button className="btn-primary flex items-center gap-2" onClick={onStart}>
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={onStart}
+              disabled={!canStart}
+              title={!hasPrivateKey ? 'Private key required' : ''}
+            >
               <Play size={14} />
               <span>Start</span>
             </button>

@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import TitleBar from './components/layout/TitleBar';
 import Sidebar from './components/layout/Sidebar';
@@ -10,9 +10,14 @@ import { useAgentProcess } from './hooks/useAgentProcess';
 import type { AgentConfig } from './types';
 import { DEFAULT_CONFIG } from './types';
 
+function isValidPrivateKey(key: string): boolean {
+  return key.startsWith('0x') && key.length === 66;
+}
+
 export default function App() {
   const { status, metrics, health, logs, start, stop, addLog } = useAgentProcess();
   const configRef = useRef<AgentConfig>(DEFAULT_CONFIG);
+  const [hasPrivateKey, setHasPrivateKey] = useState(false);
 
   const handleStart = useCallback(() => {
     start(configRef.current);
@@ -20,6 +25,7 @@ export default function App() {
 
   const handleConfigChange = useCallback((config: AgentConfig) => {
     configRef.current = config;
+    setHasPrivateKey(isValidPrivateKey(config.privateKey));
   }, []);
 
   const handleClearLogs = useCallback(() => {
@@ -41,6 +47,7 @@ export default function App() {
                 metrics={metrics}
                 health={health}
                 logs={logs}
+                hasPrivateKey={hasPrivateKey}
                 onStart={handleStart}
                 onStop={stop}
               />

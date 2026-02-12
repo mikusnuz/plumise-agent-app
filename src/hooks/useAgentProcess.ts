@@ -92,6 +92,18 @@ export function useAgentProcess() {
   const start = useCallback(async (config: AgentConfig) => {
     if (status === 'running' || status === 'starting') return;
 
+    // Frontend-level validation (works even if Tauri invoke isn't ready)
+    if (!config.privateKey || config.privateKey.trim() === '') {
+      setStatus('error');
+      addLog('ERROR', 'Private key is required. Go to Settings to configure it.');
+      return;
+    }
+    if (!config.privateKey.startsWith('0x') || config.privateKey.length !== 66) {
+      setStatus('error');
+      addLog('ERROR', 'Invalid private key format. Must be 0x-prefixed hex (66 chars).');
+      return;
+    }
+
     setStatus('starting');
     setLogs([]);
     setMetrics(EMPTY_METRICS);

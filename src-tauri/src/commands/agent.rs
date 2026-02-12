@@ -106,12 +106,12 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     // Build environment variables for the agent process
     // Desktop app always runs in standalone mode (all layers locally)
     let mut envs = vec![
-        ("PRIVATE_KEY", config.private_key.clone()),
+        ("PLUMISE_PRIVATE_KEY", config.private_key.clone()),
         ("MODEL_NAME", config.model.clone()),
         ("DEVICE", config.device.clone()),
-        ("ORACLE_URL", config.oracle_url.clone()),
-        ("CHAIN_RPC_URL", config.chain_rpc.clone()),
-        ("HTTP_PORT", config.http_port.to_string()),
+        ("ORACLE_API_URL", config.oracle_url.clone()),
+        ("PLUMISE_RPC_URL", config.chain_rpc.clone()),
+        ("API_PORT", config.http_port.to_string()),
         ("MODE", "single".to_string()), // Force standalone mode
     ];
 
@@ -188,8 +188,9 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
                     while let Ok(Some(line)) = lines.next_line().await {
+                        let level = parse_log_level(&line);
                         let _ = app_handle_stderr.emit("agent-log", LogEvent {
-                            level: "ERROR".to_string(),
+                            level: level.to_string(),
                             message: line,
                         });
                     }
@@ -238,8 +239,9 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                 }
                 CommandEvent::Stderr(bytes) => {
                     if let Ok(line) = String::from_utf8(bytes) {
+                        let level = parse_log_level(&line);
                         let _ = app_clone.emit("agent-log", LogEvent {
-                            level: "ERROR".to_string(),
+                            level: level.to_string(),
                             message: line,
                         });
                     }

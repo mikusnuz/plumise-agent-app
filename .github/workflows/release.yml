@@ -32,7 +32,22 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install ./agent-src
-          pip install pyinstaller
+          pip install pyinstaller grpcio-tools
+
+      - name: Generate gRPC proto stubs
+        working-directory: agent-src
+        run: |
+          New-Item -Path "src/plumise_agent/grpc_/generated" -ItemType Directory -Force
+          python -m grpc_tools.protoc `
+            -I proto `
+            --python_out=src/plumise_agent/grpc_/generated `
+            --grpc_python_out=src/plumise_agent/grpc_/generated `
+            --pyi_out=src/plumise_agent/grpc_/generated `
+            proto/inference.proto
+          # Fix relative imports in generated grpc stub
+          (Get-Content src/plumise_agent/grpc_/generated/inference_pb2_grpc.py) -replace '^import inference_pb2', 'from . import inference_pb2' | Set-Content src/plumise_agent/grpc_/generated/inference_pb2_grpc.py
+          Write-Host "Proto stubs generated successfully"
+        shell: pwsh
 
       - name: Build plumise-agent.exe with PyInstaller
         working-directory: agent-src

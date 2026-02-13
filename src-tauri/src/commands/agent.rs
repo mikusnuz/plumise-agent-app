@@ -74,7 +74,7 @@ impl Default for AgentState {
             process: None,
             fallback_pid: None,
             status: AgentStatus::Stopped,
-            http_port: 8080,
+            http_port: 18920,
         }
     }
 }
@@ -123,7 +123,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     }
 
     if config.ram_limit_mb > 0 {
-        envs.push(("RAM_LIMIT_MB", config.ram_limit_mb.to_string()));
+        envs.push(("RAM_MB", config.ram_limit_mb.to_string()));
     }
 
     // Try to use sidecar first, fallback to system PATH for dev mode
@@ -131,7 +131,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         .shell()
         .sidecar("plumise-agent")
         .and_then(|cmd| {
-            let mut cmd = cmd;
+            let mut cmd = cmd.args(["start"]);
             for (key, val) in &envs {
                 cmd = cmd.env(key, val);
             }
@@ -149,6 +149,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
             // Fallback to system PATH (dev mode)
             use tokio::process::Command;
             let mut cmd = Command::new("plumise-agent");
+            cmd.arg("start");
             for (key, val) in &envs {
                 cmd.env(key, val);
             }
@@ -678,35 +679,27 @@ fn parse_log_level(line: &str) -> &str {
 }
 
 fn mask_sensitive_data(line: &str) -> String {
-    let mut result = line.to_string();
-    
-    loop {
-        let mut found = None;
-        if let Some(start) = result.find("0x") {
-            if start + 66 <= result.len() {
-                let candidate = &result[start..start + 66];
-                let is_hex = candidate[2..].chars().all(|c| c.is_ascii_hexdigit());
-                if is_hex {
-                    found = Some((start, start + 66));
-                }
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut result = String::with_capacity(len);
+    let mut i = 0;
+
+    while i < len {
+        // Look for "0x" prefix with at least 64 hex chars following
+        if i + 66 <= len && bytes[i] == b'0' && bytes[i + 1] == b'x' {
+            let candidate = &line[i + 2..i + 66];
+            if candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+                // Mask: show first 6 chars + last 4 chars
+                result.push_str(&line[i..i + 6]);
+                result.push_str("****...****");
+                result.push_str(&line[i + 62..i + 66]);
+                i += 66;
+                continue;
             }
         }
-        
-        if let Some((start, end)) = found {
-            let before = &result[..start];
-            let key_part = &result[start..end];
-            let after = &result[end..];
-            let first = &key_part[..6];
-            let last = &key_part[62..];
-            let masked = format!("{}****...****{}", first, last);
-            result = format!("{}{}{}", before, masked, after);
-            if result.len() < end {
-                break;
-            }
-        } else {
-            break;
-        }
+        result.push(bytes[i] as char);
+        i += 1;
     }
-    
+
     result
 }

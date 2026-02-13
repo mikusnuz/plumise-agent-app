@@ -235,5 +235,10 @@ export function useAgentProcess() {
     };
   }, [stopPolling, addLog]);
 
-  return { status, metrics, health, logs, start, stop, addLog };
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+    logIdRef.current = 0;
+  }, []);
+
+  return { status, metrics, health, logs, start, stop, addLog, clearLogs };
 }

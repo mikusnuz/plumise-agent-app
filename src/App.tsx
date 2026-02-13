@@ -15,7 +15,7 @@ function isValidPrivateKey(key: string): boolean {
 }
 
 export default function App() {
-  const { status, metrics, health, logs, start, stop, addLog } = useAgentProcess();
+  const { status, metrics, health, logs, start, stop, addLog, clearLogs } = useAgentProcess();
   const configRef = useRef<AgentConfig>(DEFAULT_CONFIG);
   const [hasPrivateKey, setHasPrivateKey] = useState(false);
 
@@ -29,8 +29,8 @@ export default function App() {
   }, []);
 
   const handleClearLogs = useCallback(() => {
-    addLog('INFO', '--- Logs cleared ---');
-  }, [addLog]);
+    clearLogs();
+  }, [clearLogs]);
 
   // Stop agent before closing the app window
   const handleBeforeClose = useCallback(async () => {

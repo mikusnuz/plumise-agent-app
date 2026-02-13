@@ -28,10 +28,14 @@ async function loadConfig(): Promise<AgentConfig> {
     }
   }
 
-  // Browser fallback: localStorage
+  // Browser fallback: localStorage (privateKey is never stored here)
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      delete parsed.privateKey; // Ensure privateKey is never loaded from localStorage
+      return { ...DEFAULT_CONFIG, ...parsed };
+    }
   } catch { /* ignore */ }
   return { ...DEFAULT_CONFIG };
 }
@@ -46,9 +50,10 @@ async function saveConfig(config: AgentConfig) {
     }
   }
 
-  // Always save to localStorage as fallback
+  // Save to localStorage as fallback, but NEVER store privateKey
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    const { privateKey: _, ...safeConfig } = config;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeConfig));
   } catch (err) {
     console.error('Failed to save config to localStorage:', err);
   }

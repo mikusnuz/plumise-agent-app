@@ -63,6 +63,7 @@ pub struct LayerRange {
 
 pub struct AgentState {
     pub process: Option<CommandChild>,
+    pub fallback_pid: Option<u32>,
     pub status: AgentStatus,
     pub http_port: u16,
 }
@@ -71,6 +72,7 @@ impl Default for AgentState {
     fn default() -> Self {
         Self {
             process: None,
+            fallback_pid: None,
             status: AgentStatus::Stopped,
             http_port: 8080,
         }
@@ -197,11 +199,8 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                 });
             }
 
-            // For fallback mode, we need to wrap tokio::process::Child
-            // Since CommandChild is not directly constructible, we'll store the tokio child
-            // This means we need to handle this case separately in stop_agent
-            // For now, we'll skip sidecar event handling for fallback
-            guard.process = None; // Will be handled by health polling
+            // Store the fallback process PID so stop_agent can kill it
+            guard.fallback_pid = pid;
             drop(guard);
 
             // Spawn health polling
@@ -278,16 +277,19 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
 #[tauri::command]
 pub async fn stop_agent(app: AppHandle) -> Result<(), String> {
     let state = app.state::<SharedAgentState>();
-    let mut guard = state.lock().await;
 
-    if guard.status == AgentStatus::Stopped {
-        return Err("Agent is not running".into());
-    }
+    // Phase 1: Read state and mark as stopping, then release the lock
+    let http_port;
+    {
+        let mut guard = state.lock().await;
+        if guard.status == AgentStatus::Stopped {
+            return Err("Agent is not running".into());
+        }
+        guard.status = AgentStatus::Stopping;
+        http_port = guard.http_port;
+    } // lock released here
 
-    guard.status = AgentStatus::Stopping;
-    let http_port = guard.http_port;
-
-    // Try graceful shutdown via HTTP first
+    // Phase 2: Attempt graceful HTTP shutdown without holding the lock
     let shutdown_url = format!("http://127.0.0.1:{}/shutdown", http_port);
     let client = reqwest::Client::new();
     let graceful = client
@@ -296,23 +298,26 @@ pub async fn stop_agent(app: AppHandle) -> Result<(), String> {
         .send()
         .await;
 
-    if graceful.is_err() {
-        // Graceful shutdown failed, kill the process
-        log::warn!("Graceful shutdown failed, killing process");
-        if let Some(child) = guard.process.take() {
-            let _ = child.kill();
-        }
-    } else {
-        // Wait a bit for graceful shutdown
+    if graceful.is_ok() {
+        // Wait a bit for graceful shutdown (without holding the lock)
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        // Force kill if still alive
-        if let Some(child) = guard.process.take() {
-            let _ = child.kill();
-        }
+    } else {
+        log::warn!("Graceful shutdown failed, will force kill");
     }
 
-    guard.process = None;
-    guard.status = AgentStatus::Stopped;
+    // Phase 3: Re-acquire lock and force kill any remaining processes
+    {
+        let mut guard = state.lock().await;
+        if let Some(child) = guard.process.take() {
+            let _ = child.kill();
+        }
+        if let Some(pid) = guard.fallback_pid.take() {
+            kill_pid(pid);
+        }
+        guard.process = None;
+        guard.fallback_pid = None;
+        guard.status = AgentStatus::Stopped;
+    } // lock released here
 
     let _ = app.emit("agent-status", AgentStatusEvent {
         status: AgentStatus::Stopped,
@@ -420,40 +425,57 @@ pub async fn preflight_check(config: AgentConfig) -> Result<PreflightResult, Str
         },
     });
 
-    // 2. Oracle URL reachability
+    // 2. Oracle URL reachability — must return HTTP 200 with valid JSON body
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap();
-    let oracle_ok = client
-        .get(&config.oracle_url)
-        .send()
-        .await
-        .is_ok();
+    let oracle_check = async {
+        let resp = client.get(&config.oracle_url).send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        let body = resp.text().await.map_err(|e| e.to_string())?;
+        serde_json::from_str::<serde_json::Value>(&body)
+            .map_err(|_| "Response is not valid JSON".to_string())?;
+        Ok::<(), String>(())
+    }.await;
+    let oracle_ok = oracle_check.is_ok();
     checks.push(PreflightCheck {
         name: "Oracle".to_string(),
         passed: oracle_ok,
         message: if oracle_ok {
             format!("Connected to {}", config.oracle_url)
         } else {
-            format!("Cannot reach {}", config.oracle_url)
+            format!("Cannot reach {}: {}", config.oracle_url, oracle_check.unwrap_err())
         },
     });
 
-    // 3. Chain RPC reachability
-    let rpc_ok = client
-        .post(&config.chain_rpc)
-        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}))
-        .send()
-        .await
-        .is_ok();
+    // 3. Chain RPC reachability — must return HTTP 200 with JSON containing "result" field
+    let rpc_check = async {
+        let resp = client
+            .post(&config.chain_rpc)
+            .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if json.get("result").is_none() {
+            return Err("RPC response missing 'result' field".to_string());
+        }
+        Ok::<(), String>(())
+    }.await;
+    let rpc_ok = rpc_check.is_ok();
     checks.push(PreflightCheck {
         name: "Chain RPC".to_string(),
         passed: rpc_ok,
         message: if rpc_ok {
             format!("Connected to {}", config.chain_rpc)
         } else {
-            format!("Cannot reach {}", config.chain_rpc)
+            format!("Cannot reach {}: {}", config.chain_rpc, rpc_check.unwrap_err())
         },
     });
 
@@ -461,12 +483,15 @@ pub async fn preflight_check(config: AgentConfig) -> Result<PreflightResult, Str
     if pk_valid {
         let balance_result = check_wallet_balance(&client, &config.chain_rpc, &config.private_key).await;
         match balance_result {
-            Ok((balance_plm, address)) => {
+            Ok((balance_display, address)) => {
+                // Check if balance is effectively zero (all zeros after decimal)
+                let is_zero = balance_display.trim_start_matches('0').trim_start_matches('.').is_empty()
+                    || balance_display == "0.0000";
                 checks.push(PreflightCheck {
                     name: "Wallet".to_string(),
                     passed: true,
-                    message: if balance_plm > 0.0 {
-                        format!("{}: {:.4} PLM", address, balance_plm)
+                    message: if !is_zero {
+                        format!("{}: {} PLM", address, balance_display)
                     } else {
                         format!("{}: 0 PLM (OK — gas is sponsored by Oracle)", address)
                     },
@@ -512,12 +537,30 @@ struct AgentStatusEvent {
     status: AgentStatus,
 }
 
+/// Convert wei (as decimal string) to ETH-like display string using pure string manipulation.
+/// Avoids f64 precision loss for large balances.
+fn wei_to_display(wei_str: &str) -> String {
+    // Pad to at least 19 chars so we can split integer/decimal parts (18 decimals)
+    let padded = format!("{:0>19}", wei_str);
+    let split_pos = padded.len() - 18;
+    let integer_part = &padded[..split_pos];
+    let decimal_part = &padded[split_pos..];
+    // Trim trailing zeros from decimal, keep at least 4 digits
+    let trimmed = decimal_part.trim_end_matches('0');
+    let decimal_display = if trimmed.len() < 4 {
+        &decimal_part[..4]
+    } else {
+        trimmed
+    };
+    format!("{}.{}", integer_part, decimal_display)
+}
+
 /// Derive Ethereum address from private key and check on-chain balance
 async fn check_wallet_balance(
     client: &reqwest::Client,
     rpc_url: &str,
     private_key: &str,
-) -> Result<(f64, String), String> {
+) -> Result<(String, String), String> {
     // Derive address from private key using keccak256
     let pk_hex = private_key.strip_prefix("0x").unwrap_or(private_key);
     let pk_bytes = hex::decode(pk_hex).map_err(|e| format!("Invalid private key hex: {}", e))?;
@@ -555,10 +598,11 @@ async fn check_wallet_balance(
         .ok_or("No balance in RPC response")?;
 
     let balance_hex = balance_hex.strip_prefix("0x").unwrap_or(balance_hex);
-    let balance_wei = u128::from_str_radix(balance_hex, 16).unwrap_or(0);
-    let balance_plm = balance_wei as f64 / 1e18;
+    let balance_wei = u128::from_str_radix(balance_hex, 16)
+        .map_err(|e| format!("Failed to parse balance hex '{}': {}", balance_hex, e))?;
+    let balance_display = wei_to_display(&balance_wei.to_string());
 
-    Ok((balance_plm, address))
+    Ok((balance_display, address))
 }
 
 /// Simple Keccak-256 hash (no external crate dependency, uses sha3)
@@ -570,6 +614,23 @@ fn sha3_keccak256(data: &[u8]) -> [u8; 32] {
     let mut output = [0u8; 32];
     output.copy_from_slice(&result);
     output
+}
+
+/// Kill a process by PID (platform-specific)
+fn kill_pid(pid: u32) {
+    log::info!("Killing fallback process PID: {}", pid);
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output();
+    }
 }
 
 fn parse_log_level(line: &str) -> &str {

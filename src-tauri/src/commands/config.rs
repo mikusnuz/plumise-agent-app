@@ -72,6 +72,12 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     let mut config: AgentConfig = serde_json::from_str(&contents)
         .map_err(|e| format!("Failed to parse config file: {}", e))?;
 
+    // Migration: fix old default port 8080 -> 18920
+    if config.http_port == 8080 {
+        log::info!("Migrating http_port from old default 8080 to 18920");
+        config.http_port = 18920;
+    }
+
     // Migration: if JSON has private_key, move it to keyring and remove from JSON
     if !config.private_key.is_empty() {
         log::info!("Migrating private key from JSON to keyring");

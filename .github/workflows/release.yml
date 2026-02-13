@@ -18,21 +18,47 @@ jobs:
 
       - name: Download llama-server (CUDA 12.4)
         run: |
-          $ver = "b5200"
-          $url = "https://github.com/ggerganov/llama.cpp/releases/download/$ver/llama-$ver-bin-win-cuda-cu12.4-x64.zip"
+          $ver = "b8022"
+          $base = "https://github.com/ggml-org/llama.cpp/releases/download/$ver"
+
+          # Download main binary package
           Write-Host "Downloading llama-server $ver..."
-          Invoke-WebRequest -Uri $url -OutFile llama.zip
+          Invoke-WebRequest -Uri "$base/llama-$ver-bin-win-cuda-12.4-x64.zip" -OutFile llama.zip
+
+          # Download CUDA runtime DLLs (separate package)
+          Write-Host "Downloading CUDA runtime DLLs..."
+          Invoke-WebRequest -Uri "$base/cudart-llama-bin-win-cuda-12.4-x64.zip" -OutFile cudart.zip
+
+          # Extract both
           Expand-Archive llama.zip -DestinationPath llama-bin
+          Expand-Archive cudart.zip -DestinationPath cudart-bin
+
+          # Debug: show extracted structure
+          Write-Host "=== llama-bin contents ==="
+          Get-ChildItem -Recurse llama-bin -File | Select-Object -First 30 FullName
 
           New-Item -Path "src-tauri/binaries" -ItemType Directory -Force
 
-          # Copy llama-server binary (Tauri sidecar naming convention)
-          Copy-Item "llama-bin/build/bin/llama-server.exe" "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
+          # Find and copy llama-server.exe (search recursively)
+          $serverExe = Get-ChildItem -Recurse llama-bin -Filter "llama-server.exe" | Select-Object -First 1
+          if (-not $serverExe) {
+            Write-Error "llama-server.exe not found in extracted archive!"
+            exit 1
+          }
+          Copy-Item $serverExe.FullName "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
+          Write-Host "Found llama-server at: $($serverExe.FullName)"
 
-          # Copy CUDA DLLs (bundled as resources)
-          Get-ChildItem "llama-bin/build/bin/*.dll" | ForEach-Object {
+          # Copy all DLLs from same directory as llama-server (ggml.dll, llama.dll, ggml-cuda.dll, etc.)
+          $serverDir = $serverExe.DirectoryName
+          Get-ChildItem "$serverDir/*.dll" | ForEach-Object {
             Copy-Item $_.FullName "src-tauri/binaries/"
             Write-Host "  Bundled: $($_.Name)"
+          }
+
+          # Copy CUDA runtime DLLs (cublas, cublasLt, cudart)
+          Get-ChildItem -Recurse cudart-bin -Filter "*.dll" | ForEach-Object {
+            Copy-Item $_.FullName "src-tauri/binaries/"
+            Write-Host "  Bundled (cudart): $($_.Name)"
           }
 
           $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe").Length / 1MB)

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Plumise Agent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "identifier": "com.plumise.agent",
   "build": {
     "frontendDist": "../dist",
@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["msi"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,12 +38,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/plumise-agent"],
-    "windows": {
-      "nsis": {
-        "languages": ["English"],
-        "displayLanguageSelector": false
-      }
-    }
+    "windows": {}
   },
   "plugins": {
     "updater": {

@@ -34,23 +34,6 @@ jobs:
           pip install ./agent-src
           pip install pyinstaller grpcio-tools
 
-      - name: Strip unnecessary CUDA libraries
-        run: |
-          $torchLib = (python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))").Trim()
-          Write-Host "Torch lib: $torchLib"
-          $before = (Get-ChildItem $torchLib -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
-          Write-Host "Before: $([math]::Round($before, 2)) GB"
-          # Remove CUDA libs not needed for transformer inference (cuBLAS + cudart kept)
-          @('cudnn*', 'cusparse*', 'cufft*', 'curand*', 'cusolver*', 'nvrtc*', 'nvjitlink*') | ForEach-Object {
-            Get-ChildItem "$torchLib\$_" -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "  Removing $($_.Name) ($([math]::Round($_.Length / 1MB)) MB)"
-              Remove-Item $_.FullName -Force
-            }
-          }
-          $after = (Get-ChildItem $torchLib -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
-          Write-Host "After: $([math]::Round($after, 2)) GB (saved $([math]::Round($before - $after, 2)) GB)"
-        shell: pwsh
-
       - name: Generate gRPC proto stubs
         working-directory: agent-src
         run: |
@@ -76,10 +59,6 @@ jobs:
           Copy-Item "agent-src/dist/plumise-agent.exe" "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe"
           $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe").Length / 1MB)
           Write-Host "Sidecar binary: $sizeMB MB"
-          if ($sizeMB -gt 1900) {
-            Write-Host "::error::Sidecar binary exceeds 1.9 GB — NSIS will fail (32-bit mmap limit)"
-            exit 1
-          }
         shell: pwsh
 
       - name: Setup Node.js 22
@@ -109,13 +88,38 @@ jobs:
           Get-ChildItem -Recurse "src-tauri/target/release/bundle" | Select-Object FullName
         shell: pwsh
 
+      - name: Generate updater latest.json
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $msiZip = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi.zip" | Select-Object -First 1
+          $sigFile = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi.zip.sig" | Select-Object -First 1
+          $signature = Get-Content $sigFile.FullName -Raw
+          $tag = "v$version"
+          $url = "https://github.com/mikusnuz/plumise-agent-app/releases/download/$tag/$($msiZip.Name)"
+          $json = @{
+            version = $version
+            notes = "See release notes on GitHub"
+            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature.Trim()
+                url = $url
+              }
+            }
+          } | ConvertTo-Json -Depth 4
+          $json | Out-File -FilePath "src-tauri/target/release/bundle/msi/latest.json" -Encoding utf8
+          Write-Host "Generated latest.json for $tag"
+          Write-Host $json
+        shell: pwsh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.json
+            src-tauri/target/release/bundle/msi/*.msi.zip
+            src-tauri/target/release/bundle/msi/*.msi.zip.sig
+            src-tauri/target/release/bundle/msi/latest.json
           draft: false
           prerelease: false
           generate_release_notes: true

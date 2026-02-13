@@ -49,7 +49,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   device: 'auto',
   oracleUrl: 'https://node-1.plumise.com/oracle',
   chainRpc: 'https://node-1.plumise.com/rpc',
-  httpPort: 8080,
+  httpPort: 18920,
   grpcPort: 0, // standalone mode: gRPC disabled
   ramLimitMb: 0,
 };

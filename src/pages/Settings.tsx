@@ -276,7 +276,7 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                   type="number"
                   className="input-field w-32"
                   value={config.httpPort}
-                  onChange={(e) => update('httpPort', parseInt(e.target.value) || 8080)}
+                  onChange={(e) => update('httpPort', parseInt(e.target.value) || 18920)}
                   disabled={isRunning}
                 />
                 <p className="text-[10px] text-[var(--text-dim)] mt-1">

@@ -58,6 +58,7 @@ export function useAgentProcess() {
     if (pollRef.current !== null) clearInterval(pollRef.current);
 
     let pollCount = 0;
+    let ready_detected = false;
 
     pollRef.current = window.setInterval(async () => {
       pollCount++;
@@ -80,9 +81,12 @@ export function useAgentProcess() {
         if (healthRes.ok) {
           const h = await healthRes.json();
           setHealth(h);
-          if (h.status === 'ok' || h.status === 'ready') {
+          if ((h.status === 'ok' || h.status === 'ready') && !ready_detected) {
+            ready_detected = true;
             setStatus('running');
             startTimeRef.current = null;
+            const modeLabel = h.mode === 'pipeline' ? 'pipeline (distributed)' : 'single (standalone)';
+            addLog('INFO', `Mode: ${modeLabel}`);
           }
         }
 
@@ -157,7 +161,7 @@ export function useAgentProcess() {
         addLog('INFO', 'All pre-flight checks passed');
 
         addLog('INFO', `Starting agent with model: ${config.model}`);
-        addLog('INFO', `Device: ${config.device}, Mode: standalone`);
+        addLog('INFO', `Device: ${config.device}`);
 
         await invoke('start_agent', { config });
         addLog('INFO', 'Agent process launched — loading model (this may take several minutes)...');
@@ -165,7 +169,7 @@ export function useAgentProcess() {
         // --- Browser fallback (no Tauri) ---
         addLog('WARNING', 'Tauri API not available — running in browser mock mode');
         addLog('INFO', `Starting agent with model: ${config.model}`);
-        addLog('INFO', `Device: ${config.device}, Mode: standalone`);
+        addLog('INFO', `Device: ${config.device}`);
         addLog('INFO', 'Waiting for agent HTTP server...');
       }
 

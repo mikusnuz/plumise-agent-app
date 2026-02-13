@@ -106,7 +106,6 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     }
 
     // Build environment variables for the agent process
-    // Desktop app always runs in standalone mode (all layers locally)
     let mut envs = vec![
         ("PLUMISE_PRIVATE_KEY", config.private_key.clone()),
         ("MODEL_NAME", config.model.clone()),
@@ -114,7 +113,6 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         ("ORACLE_API_URL", config.oracle_url.clone()),
         ("PLUMISE_RPC_URL", config.chain_rpc.clone()),
         ("API_PORT", config.http_port.to_string()),
-        ("MODE", "single".to_string()), // Force standalone mode
     ];
 
     // Only set gRPC port if > 0 (0 = disabled for standalone)
@@ -539,17 +537,31 @@ pub async fn preflight_check(config: AgentConfig) -> Result<PreflightResult, Str
         }
     }
 
-    // 5. Port availability
-    let port_free = std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
+    // 5. HTTP port availability
+    let http_port_free = std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
     checks.push(PreflightCheck {
-        name: "Port".to_string(),
-        passed: port_free,
-        message: if port_free {
-            format!("Port {} is available", config.http_port)
+        name: "HTTP Port".to_string(),
+        passed: http_port_free,
+        message: if http_port_free {
+            format!("HTTP port {} is available", config.http_port)
         } else {
-            format!("Port {} is already in use", config.http_port)
+            format!("HTTP port {} is already in use", config.http_port)
         },
     });
+
+    // 6. gRPC port availability (only if enabled)
+    if config.grpc_port > 0 {
+        let grpc_port_free = std::net::TcpListener::bind(format!("127.0.0.1:{}", config.grpc_port)).is_ok();
+        checks.push(PreflightCheck {
+            name: "gRPC Port".to_string(),
+            passed: grpc_port_free,
+            message: if grpc_port_free {
+                format!("gRPC port {} is available", config.grpc_port)
+            } else {
+                format!("gRPC port {} is already in use", config.grpc_port)
+            },
+        });
+    }
 
     let passed = checks.iter().all(|c| c.passed);
 

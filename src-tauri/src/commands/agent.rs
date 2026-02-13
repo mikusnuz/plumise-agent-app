@@ -203,6 +203,32 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
             guard.fallback_pid = pid;
             drop(guard);
 
+            // Spawn exit watcher for fallback process
+            let state_exit = Arc::clone(&state.inner());
+            let app_exit = app.clone();
+            tokio::spawn(async move {
+                match tokio_child.wait().await {
+                    Ok(exit_status) => {
+                        log::warn!("Fallback agent process exited: {:?}", exit_status);
+                        let mut guard = state_exit.lock().await;
+                        if guard.status != AgentStatus::Stopped && guard.status != AgentStatus::Stopping {
+                            guard.status = AgentStatus::Error;
+                            guard.fallback_pid = None;
+                            let _ = app_exit.emit("agent-status", AgentStatusEvent {
+                                status: AgentStatus::Error,
+                            });
+                            let _ = app_exit.emit("agent-log", LogEvent {
+                                level: "ERROR".to_string(),
+                                message: format!("Agent process exited: {:?}", exit_status),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to wait on fallback process: {}", e);
+                    }
+                }
+            });
+
             // Spawn health polling
             let state_clone = Arc::clone(&state.inner());
             let app_clone = app.clone();

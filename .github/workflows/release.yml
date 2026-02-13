@@ -16,49 +16,29 @@ jobs:
       - name: Checkout plumise-agent-app
         uses: actions/checkout@v4
 
-      - name: Checkout plumise-agent
-        uses: actions/checkout@v4
-        with:
-          repository: mikusnuz/plumise-agent
-          token: ${{ secrets.PAT }}
-          path: agent-src
-
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Python dependencies
+      - name: Download llama-server (CUDA 12.4)
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cu124
-          pip install ./agent-src
-          pip install pyinstaller grpcio-tools
+          $ver = "b5200"
+          $url = "https://github.com/ggerganov/llama.cpp/releases/download/$ver/llama-$ver-bin-win-cuda-cu12.4-x64.zip"
+          Write-Host "Downloading llama-server $ver..."
+          Invoke-WebRequest -Uri $url -OutFile llama.zip
+          Expand-Archive llama.zip -DestinationPath llama-bin
 
-      - name: Generate gRPC proto stubs
-        working-directory: agent-src
-        run: |
-          New-Item -Path "src/plumise_agent/grpc_/generated" -ItemType Directory -Force
-          python -m grpc_tools.protoc `
-            -I proto `
-            --python_out=src/plumise_agent/grpc_/generated `
-            --grpc_python_out=src/plumise_agent/grpc_/generated `
-            --pyi_out=src/plumise_agent/grpc_/generated `
-            proto/inference.proto
-          # Fix relative imports in generated grpc stub
-          (Get-Content src/plumise_agent/grpc_/generated/inference_pb2_grpc.py) -replace '^import inference_pb2', 'from . import inference_pb2' | Set-Content src/plumise_agent/grpc_/generated/inference_pb2_grpc.py
-          Write-Host "Proto stubs generated successfully"
-        shell: pwsh
-
-      - name: Build plumise-agent.exe with PyInstaller
-        working-directory: agent-src
-        run: pyinstaller plumise-agent.spec
-
-      - name: Copy agent binary to Tauri binaries
-        run: |
           New-Item -Path "src-tauri/binaries" -ItemType Directory -Force
-          Copy-Item "agent-src/dist/plumise-agent.exe" "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe"
-          $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe").Length / 1MB)
-          Write-Host "Sidecar binary: $sizeMB MB"
+
+          # Copy llama-server binary (Tauri sidecar naming convention)
+          Copy-Item "llama-bin/build/bin/llama-server.exe" "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
+
+          # Copy CUDA DLLs (bundled as resources)
+          Get-ChildItem "llama-bin/build/bin/*.dll" | ForEach-Object {
+            Copy-Item $_.FullName "src-tauri/binaries/"
+            Write-Host "  Bundled: $($_.Name)"
+          }
+
+          $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe").Length / 1MB)
+          Write-Host "llama-server binary: $sizeMB MB"
+          $dllCount = (Get-ChildItem "src-tauri/binaries/*.dll").Count
+          Write-Host "DLLs bundled: $dllCount"
         shell: pwsh
 
       - name: Setup Node.js 22

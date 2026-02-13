@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Plumise Agent",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "identifier": "com.plumise.agent",
   "build": {
     "frontendDist": "../dist",
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* https://node-1.plumise.com https://github.com ipc: tauri:; object-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* https://node-1.plumise.com https://huggingface.co https://github.com ipc: tauri:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {
@@ -37,7 +37,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/plumise-agent"],
+    "externalBin": ["binaries/llama-server"],
+    "resources": ["binaries/*.dll"],
     "windows": {}
   },
   "plugins": {

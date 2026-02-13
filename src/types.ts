@@ -34,12 +34,14 @@ export interface LoadingProgress {
 export interface AgentConfig {
   privateKey: string;
   model: string;
+  modelFile: string;
   device: string;
   oracleUrl: string;
   chainRpc: string;
   httpPort: number;
-  grpcPort: number;
-  ramLimitMb: number;
+  gpuLayers: number;
+  ctxSize: number;
+  parallelSlots: number;
 }
 
 export interface LogEntry {
@@ -51,11 +53,13 @@ export interface LogEntry {
 
 export const DEFAULT_CONFIG: AgentConfig = {
   privateKey: '',
-  model: 'openai/gpt-oss-20b',
+  model: 'ggml-org/gpt-oss-20b-GGUF',
+  modelFile: 'gpt-oss-20b-MXFP4.gguf',
   device: 'auto',
   oracleUrl: 'https://node-1.plumise.com/oracle',
   chainRpc: 'https://node-1.plumise.com/rpc',
   httpPort: 18920,
-  grpcPort: 0, // standalone mode: gRPC disabled
-  ramLimitMb: 0,
+  gpuLayers: 99,
+  ctxSize: 8192,
+  parallelSlots: 4,
 };

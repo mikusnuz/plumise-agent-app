@@ -59,7 +59,7 @@ export function useAgentProcess() {
     if (pollRef.current !== null) clearInterval(pollRef.current);
 
     let pollCount = 0;
-    let ready_detected = false;
+    const invoke = invokePromise;
 
     pollRef.current = window.setInterval(async () => {
       pollCount++;
@@ -74,32 +74,48 @@ export function useAgentProcess() {
       }
 
       try {
-        const [healthRes, metricsRes] = await Promise.all([
-          fetch(`http://localhost:${port}/health`),
-          fetch(`http://localhost:${port}/api/v1/metrics`),
-        ]);
+        // Use Tauri command for metrics (llama-server doesn't have /api/v1/metrics)
+        const inv = invoke ? await invoke : null;
+        if (inv) {
+          const m = await inv('get_agent_metrics') as {
+            status: string;
+            model: string;
+            address: string;
+            uptime: number;
+            totalTokens: number;
+            totalRequests: number;
+            tps: number;
+          };
 
-        if (healthRes.ok) {
-          const h = await healthRes.json();
-          setHealth(h);
-          if ((h.status === 'ok' || h.status === 'ready') && !ready_detected) {
-            ready_detected = true;
-            setStatus('running');
-            startTimeRef.current = null;
-            const modeLabel = h.mode === 'pipeline' ? 'pipeline (distributed)' : 'single (standalone)';
-            addLog('INFO', `Mode: ${modeLabel}`);
+          if (m.status === 'ok') {
+            setHealth({
+              status: 'ok',
+              model: m.model,
+              mode: 'standalone',
+              address: m.address,
+              uptime: m.uptime,
+            });
+            setMetrics({
+              totalRequests: m.totalRequests,
+              totalTokensProcessed: m.totalTokens,
+              avgLatencyMs: 0,
+              tokensPerSecond: m.tps,
+              uptimeSeconds: Math.floor(m.uptime),
+            });
           }
-        }
-
-        if (metricsRes.ok) {
-          const m = await metricsRes.json();
-          setMetrics({
-            totalRequests: m.total_requests ?? 0,
-            totalTokensProcessed: m.total_tokens_processed ?? 0,
-            avgLatencyMs: m.avg_latency_ms ?? 0,
-            tokensPerSecond: m.tokens_per_second ?? 0,
-            uptimeSeconds: m.uptime_seconds ?? 0,
-          });
+        } else {
+          // Browser fallback: poll llama-server /health directly
+          const healthRes = await fetch(`http://localhost:${port}/health`);
+          if (healthRes.ok) {
+            const h = await healthRes.json();
+            setHealth({
+              status: h.status || 'unknown',
+              model: '',
+              mode: 'standalone',
+              address: '',
+              uptime: 0,
+            });
+          }
         }
       } catch {
         // Agent not ready yet, keep polling
@@ -163,7 +179,7 @@ export function useAgentProcess() {
         addLog('INFO', 'All pre-flight checks passed');
 
         addLog('INFO', `Starting agent with model: ${config.model}`);
-        addLog('INFO', `Device: ${config.device}`);
+        addLog('INFO', `Device: ${config.device}, GPU Layers: ${config.gpuLayers}`);
 
         await invoke('start_agent', { config });
         addLog('INFO', 'Agent process launched — loading model (this may take several minutes)...');
@@ -175,7 +191,7 @@ export function useAgentProcess() {
         addLog('INFO', 'Waiting for agent HTTP server...');
       }
 
-      // Start polling the agent's HTTP API
+      // Start polling the agent's metrics
       startPolling(config.httpPort);
     } catch (err) {
       setStatus('error');

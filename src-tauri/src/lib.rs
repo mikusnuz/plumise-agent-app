@@ -1,7 +1,11 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+mod chain;
 mod commands;
+mod inference;
+mod model;
+mod oracle;
 
 use commands::agent::{AgentState, SharedAgentState};
 
@@ -27,6 +31,8 @@ pub fn run() {
             commands::agent::start_agent,
             commands::agent::stop_agent,
             commands::agent::get_agent_status,
+            commands::agent::get_agent_metrics,
+            commands::agent::check_model,
             commands::agent::preflight_check,
             commands::system::get_system_info,
             commands::config::save_config,

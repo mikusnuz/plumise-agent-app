@@ -183,7 +183,7 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                Model ID
+                Model Repository
               </label>
               <select
                 className="input-field"
@@ -191,7 +191,7 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 onChange={(e) => update('model', e.target.value)}
                 disabled={isRunning}
               >
-                <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (21B)</option>
+                <option value="ggml-org/gpt-oss-20b-GGUF">gpt-oss-20b GGUF (11GB)</option>
               </select>
             </div>
 
@@ -208,23 +208,46 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 <option value="auto">Auto Detect</option>
                 <option value="cuda">CUDA (GPU)</option>
                 <option value="cpu">CPU Only</option>
-                <option value="mps">MPS (Apple Silicon)</option>
               </select>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-              RAM Limit (MB) — 0 = auto
-            </label>
-            <input
-              type="number"
-              className="input-field w-40"
-              value={config.ramLimitMb}
-              onChange={(e) => update('ramLimitMb', parseInt(e.target.value) || 0)}
-              disabled={isRunning}
-              min={0}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                GPU Layers
+              </label>
+              <input
+                type="number"
+                className="input-field w-32"
+                value={config.gpuLayers}
+                onChange={(e) => update('gpuLayers', parseInt(e.target.value) || 0)}
+                disabled={isRunning}
+                min={0}
+                max={999}
+              />
+              <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                0 = CPU only, 99 = all layers on GPU
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                Context Size
+              </label>
+              <select
+                className="input-field"
+                value={config.ctxSize}
+                onChange={(e) => update('ctxSize', parseInt(e.target.value))}
+                disabled={isRunning}
+              >
+                <option value={2048}>2048</option>
+                <option value={4096}>4096</option>
+                <option value={8192}>8192</option>
+                <option value={16384}>16384</option>
+                <option value={32768}>32768</option>
+              </select>
+            </div>
           </div>
         </section>
 
@@ -268,20 +291,40 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                  HTTP Port
-                </label>
-                <input
-                  type="number"
-                  className="input-field w-32"
-                  value={config.httpPort}
-                  onChange={(e) => update('httpPort', parseInt(e.target.value) || 18920)}
-                  disabled={isRunning}
-                />
-                <p className="text-[10px] text-[var(--text-dim)] mt-1">
-                  Local port for agent health monitoring
-                </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                    HTTP Port
+                  </label>
+                  <input
+                    type="number"
+                    className="input-field w-32"
+                    value={config.httpPort}
+                    onChange={(e) => update('httpPort', parseInt(e.target.value) || 18920)}
+                    disabled={isRunning}
+                  />
+                  <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                    Local port for llama-server
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                    Parallel Slots
+                  </label>
+                  <input
+                    type="number"
+                    className="input-field w-32"
+                    value={config.parallelSlots}
+                    onChange={(e) => update('parallelSlots', parseInt(e.target.value) || 1)}
+                    disabled={isRunning}
+                    min={1}
+                    max={32}
+                  />
+                  <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                    Concurrent inference slots
+                  </p>
+                </div>
               </div>
             </div>
           )}

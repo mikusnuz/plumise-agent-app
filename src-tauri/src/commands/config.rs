@@ -56,13 +56,15 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
         // Return default config if no saved config exists
         return Ok(AgentConfig {
             private_key: String::new(),
-            model: "openai/gpt-oss-20b".to_string(),
+            model: "ggml-org/gpt-oss-20b-GGUF".to_string(),
+            model_file: "gpt-oss-20b-MXFP4.gguf".to_string(),
             device: "auto".to_string(),
             oracle_url: "https://node-1.plumise.com/oracle".to_string(),
             chain_rpc: "https://node-1.plumise.com/rpc".to_string(),
             http_port: 18920,
-            grpc_port: 50051,
-            ram_limit_mb: 0,
+            gpu_layers: 99,
+            ctx_size: 8192,
+            parallel_slots: 4,
         });
     }
 
@@ -76,6 +78,12 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     if config.http_port == 8080 {
         log::info!("Migrating http_port from old default 8080 to 18920");
         config.http_port = 18920;
+    }
+
+    // Migration: old model name -> new GGUF repo
+    if config.model == "openai/gpt-oss-20b" {
+        log::info!("Migrating model from openai/gpt-oss-20b to ggml-org/gpt-oss-20b-GGUF");
+        config.model = "ggml-org/gpt-oss-20b-GGUF".to_string();
     }
 
     // Migration: if JSON has private_key, move it to keyring and remove from JSON

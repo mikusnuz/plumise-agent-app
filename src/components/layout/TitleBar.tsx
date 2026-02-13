@@ -33,10 +33,15 @@ export default function TitleBar({ onBeforeClose }: TitleBarProps) {
         if (closingRef.current) return;
         closingRef.current = true;
         event.preventDefault();
-        if (onBeforeClose) {
-          await onBeforeClose();
+        try {
+          if (onBeforeClose) {
+            await onBeforeClose();
+          }
+          await win.destroy();
+        } catch (e) {
+          console.error('Failed to destroy window:', e);
+          closingRef.current = false;
         }
-        await win.destroy();
       }).then((fn: () => void) => {
         unlisten = fn;
       });
@@ -48,11 +53,18 @@ export default function TitleBar({ onBeforeClose }: TitleBarProps) {
   const handleClose = async () => {
     if (closingRef.current) return;
     closingRef.current = true;
-    if (onBeforeClose) {
-      await onBeforeClose();
+    try {
+      if (onBeforeClose) {
+        await onBeforeClose();
+      }
+      const win = await getAppWindow();
+      if (win) {
+        await win.close();
+      }
+    } catch (e) {
+      console.error('Failed to close window:', e);
+      closingRef.current = false;
     }
-    const win = await getAppWindow();
-    if (win) await win.destroy();
   };
 
   return (

@@ -457,7 +457,8 @@ pub async fn preflight_check(config: AgentConfig) -> Result<PreflightResult, Str
         .build()
         .unwrap();
     let oracle_check = async {
-        let resp = client.get(&config.oracle_url).send().await.map_err(|e| e.to_string())?;
+        let oracle_health_url = format!("{}/api/stats", config.oracle_url.trim_end_matches('/'));
+        let resp = client.get(&oracle_health_url).send().await.map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }

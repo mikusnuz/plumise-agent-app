@@ -57,7 +57,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
         return Ok(AgentConfig {
             private_key: String::new(),
             model: "ggml-org/gpt-oss-20b-GGUF".to_string(),
-            model_file: "gpt-oss-20b-MXFP4.gguf".to_string(),
+            model_file: "gpt-oss-20b-mxfp4.gguf".to_string(),
             device: "auto".to_string(),
             oracle_url: "https://node-1.plumise.com/oracle".to_string(),
             chain_rpc: "https://node-1.plumise.com/rpc".to_string(),
@@ -84,6 +84,12 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     if config.model == "openai/gpt-oss-20b" {
         log::info!("Migrating model from openai/gpt-oss-20b to ggml-org/gpt-oss-20b-GGUF");
         config.model = "ggml-org/gpt-oss-20b-GGUF".to_string();
+    }
+
+    // Migration: fix model_file case (MXFP4 -> mxfp4, HuggingFace is case-sensitive)
+    if config.model_file == "gpt-oss-20b-MXFP4.gguf" {
+        log::info!("Migrating model_file case: MXFP4 -> mxfp4");
+        config.model_file = "gpt-oss-20b-mxfp4.gguf".to_string();
     }
 
     // Migration: if JSON has private_key, move it to keyring and remove from JSON

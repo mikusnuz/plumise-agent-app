@@ -31,7 +31,7 @@ pub struct AgentConfig {
 }
 
 fn default_model_file() -> String {
-    "gpt-oss-20b-MXFP4.gguf".to_string()
+    "gpt-oss-20b-mxfp4.gguf".to_string()
 }
 fn default_gpu_layers() -> i32 {
     99

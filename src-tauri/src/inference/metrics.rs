@@ -37,6 +37,8 @@ pub async fn fetch_metrics(
 /// Parse Prometheus text format from llama-server
 fn parse_prometheus(text: &str) -> Result<InferenceMetrics, String> {
     let mut metrics = InferenceMetrics::default();
+    let mut prompt_seconds: f64 = 0.0;
+    let mut predicted_seconds: f64 = 0.0;
 
     for line in text.lines() {
         let line = line.trim();
@@ -71,25 +73,26 @@ fn parse_prometheus(text: &str) -> Result<InferenceMetrics, String> {
                 metrics.slots_processing = value_f64 as u64;
             }
             "llamacpp:prompt_seconds_total" | "llamacpp_prompt_seconds_total" => {
-                // avg_latency approximation
-                if metrics.total_requests > 0 {
-                    metrics.avg_latency = value_f64 / metrics.total_requests as f64;
-                }
+                prompt_seconds = value_f64;
             }
             "llamacpp:tokens_predicted_seconds_total"
             | "llamacpp_tokens_predicted_seconds_total" => {
-                // tokens per second
-                if value_f64 > 0.0 {
-                    metrics.tps = metrics.total_tokens as f64 / value_f64;
-                }
+                predicted_seconds = value_f64;
             }
             _ => {}
         }
     }
 
-    // total_requests = prompt_tokens events (approximate)
-    // llama-server doesn't have a direct request counter in all versions
-    metrics.total_requests = metrics.total_requests.max(if metrics.total_tokens > 0 { 1 } else { 0 });
+    // Approximate total_requests (llama-server doesn't expose a direct counter)
+    metrics.total_requests = if metrics.total_tokens > 0 { 1 } else { 0 };
+
+    // Compute derived metrics after parsing all values
+    if predicted_seconds > 0.0 {
+        metrics.tps = metrics.total_tokens as f64 / predicted_seconds;
+    }
+    if metrics.total_requests > 0 && prompt_seconds > 0.0 {
+        metrics.avg_latency = prompt_seconds / metrics.total_requests as f64;
+    }
 
     Ok(metrics)
 }

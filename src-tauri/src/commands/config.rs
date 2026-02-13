@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 use tauri::Manager;
+use keyring::Entry;
 
 use super::agent::AgentConfig;
 
 const CONFIG_FILE_NAME: &str = "agent-config.json";
+const KEYRING_SERVICE: &str = "com.plumise.agent";
+const KEYRING_USER: &str = "plumise-agent-private-key";
 
 fn get_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app
@@ -21,7 +24,21 @@ fn get_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub async fn save_config(config: AgentConfig, app: tauri::AppHandle) -> Result<(), String> {
     let path = get_config_path(&app)?;
-    let json = serde_json::to_string_pretty(&config)
+
+    // Save private_key to OS keyring
+    if !config.private_key.is_empty() {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+        entry.set_password(&config.private_key)
+            .map_err(|e| format!("Failed to save private key to keyring: {}", e))?;
+        log::info!("Private key saved to OS keyring");
+    }
+
+    // Create a config copy without private_key for JSON storage
+    let mut config_to_save = config.clone();
+    config_to_save.private_key = String::new();
+
+    let json = serde_json::to_string_pretty(&config_to_save)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     std::fs::write(&path, json)
@@ -43,7 +60,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             device: "auto".to_string(),
             oracle_url: "https://node-1.plumise.com/oracle".to_string(),
             chain_rpc: "https://node-1.plumise.com/rpc".to_string(),
-            http_port: 8080,
+            http_port: 18920,
             grpc_port: 50051,
             ram_limit_mb: 0,
         });
@@ -52,8 +69,43 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    let config: AgentConfig = serde_json::from_str(&contents)
+    let mut config: AgentConfig = serde_json::from_str(&contents)
         .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    // Migration: if JSON has private_key, move it to keyring and remove from JSON
+    if !config.private_key.is_empty() {
+        log::info!("Migrating private key from JSON to keyring");
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+        entry.set_password(&config.private_key)
+            .map_err(|e| format!("Failed to migrate private key to keyring: {}", e))?;
+
+        // Clear from config and save back to JSON
+        config.private_key = String::new();
+        let json = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to update config file: {}", e))?;
+        log::info!("Private key migrated to keyring, removed from JSON");
+    }
+
+    // Load private_key from keyring
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+
+    match entry.get_password() {
+        Ok(pk) => {
+            config.private_key = pk;
+            log::info!("Private key loaded from OS keyring");
+        }
+        Err(keyring::Error::NoEntry) => {
+            // No private key in keyring (new user or not set yet)
+            log::info!("No private key found in keyring");
+        }
+        Err(e) => {
+            log::warn!("Failed to read private key from keyring: {}", e);
+        }
+    }
 
     log::info!("Config loaded from {:?}", path);
     Ok(config)

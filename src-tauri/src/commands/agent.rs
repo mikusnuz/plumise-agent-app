@@ -176,9 +176,10 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     let mut lines = reader.lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         let level = parse_log_level(&line);
+                        let masked_line = mask_sensitive_data(&line);
                         let _ = app_handle_stdout.emit("agent-log", LogEvent {
                             level: level.to_string(),
-                            message: line,
+                            message: masked_line,
                         });
                     }
                 });
@@ -191,9 +192,10 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     let mut lines = reader.lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         let level = parse_log_level(&line);
+                        let masked_line = mask_sensitive_data(&line);
                         let _ = app_handle_stderr.emit("agent-log", LogEvent {
                             level: level.to_string(),
-                            message: line,
+                            message: masked_line,
                         });
                     }
                 });
@@ -256,18 +258,20 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                 CommandEvent::Stdout(bytes) => {
                     if let Ok(line) = String::from_utf8(bytes) {
                         let level = parse_log_level(&line);
+                        let masked_line = mask_sensitive_data(&line);
                         let _ = app_clone.emit("agent-log", LogEvent {
                             level: level.to_string(),
-                            message: line,
+                            message: masked_line,
                         });
                     }
                 }
                 CommandEvent::Stderr(bytes) => {
                     if let Ok(line) = String::from_utf8(bytes) {
                         let level = parse_log_level(&line);
+                        let masked_line = mask_sensitive_data(&line);
                         let _ = app_clone.emit("agent-log", LogEvent {
                             level: level.to_string(),
-                            message: line,
+                            message: masked_line,
                         });
                     }
                 }
@@ -671,4 +675,38 @@ fn parse_log_level(line: &str) -> &str {
     } else {
         "INFO"
     }
+}
+
+fn mask_sensitive_data(line: &str) -> String {
+    let mut result = line.to_string();
+    
+    loop {
+        let mut found = None;
+        if let Some(start) = result.find("0x") {
+            if start + 66 <= result.len() {
+                let candidate = &result[start..start + 66];
+                let is_hex = candidate[2..].chars().all(|c| c.is_ascii_hexdigit());
+                if is_hex {
+                    found = Some((start, start + 66));
+                }
+            }
+        }
+        
+        if let Some((start, end)) = found {
+            let before = &result[..start];
+            let key_part = &result[start..end];
+            let after = &result[end..];
+            let first = &key_part[..6];
+            let last = &key_part[62..];
+            let masked = format!("{}****...****{}", first, last);
+            result = format!("{}{}{}", before, masked, after);
+            if result.len() < end {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    result
 }

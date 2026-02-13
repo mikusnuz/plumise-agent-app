@@ -34,6 +34,23 @@ jobs:
           pip install ./agent-src
           pip install pyinstaller grpcio-tools
 
+      - name: Strip unnecessary CUDA libraries
+        run: |
+          $torchLib = (python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))").Trim()
+          Write-Host "Torch lib: $torchLib"
+          $before = (Get-ChildItem $torchLib -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
+          Write-Host "Before: $([math]::Round($before, 2)) GB"
+          # Remove CUDA libs not needed for transformer inference (cuBLAS + cudart kept)
+          @('cudnn*', 'cusparse*', 'cufft*', 'curand*', 'cusolver*', 'nvrtc*', 'nvjitlink*') | ForEach-Object {
+            Get-ChildItem "$torchLib\$_" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "  Removing $($_.Name) ($([math]::Round($_.Length / 1MB)) MB)"
+              Remove-Item $_.FullName -Force
+            }
+          }
+          $after = (Get-ChildItem $torchLib -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
+          Write-Host "After: $([math]::Round($after, 2)) GB (saved $([math]::Round($before - $after, 2)) GB)"
+        shell: pwsh
+
       - name: Generate gRPC proto stubs
         working-directory: agent-src
         run: |
@@ -57,6 +74,12 @@ jobs:
         run: |
           New-Item -Path "src-tauri/binaries" -ItemType Directory -Force
           Copy-Item "agent-src/dist/plumise-agent.exe" "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe"
+          $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/plumise-agent-x86_64-pc-windows-msvc.exe").Length / 1MB)
+          Write-Host "Sidecar binary: $sizeMB MB"
+          if ($sizeMB -gt 1900) {
+            Write-Host "::error::Sidecar binary exceeds 1.9 GB — NSIS will fail (32-bit mmap limit)"
+            exit 1
+          }
         shell: pwsh
 
       - name: Setup Node.js 22

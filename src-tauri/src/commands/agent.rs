@@ -152,10 +152,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                 cmd.env(key, val);
             }
             #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            }
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             cmd.stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
 

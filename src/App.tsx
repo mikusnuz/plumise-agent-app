@@ -15,7 +15,7 @@ function isValidPrivateKey(key: string): boolean {
 }
 
 export default function App() {
-  const { status, metrics, health, logs, start, stop, clearLogs } = useAgentProcess();
+  const { status, metrics, health, logs, loadingProgress, start, stop, clearLogs } = useAgentProcess();
   const configRef = useRef<AgentConfig>(DEFAULT_CONFIG);
   const [hasPrivateKey, setHasPrivateKey] = useState(false);
 
@@ -55,6 +55,7 @@ export default function App() {
                 health={health}
                 logs={logs}
                 hasPrivateKey={hasPrivateKey}
+                loadingProgress={loadingProgress}
                 onStart={handleStart}
                 onStop={stop}
               />

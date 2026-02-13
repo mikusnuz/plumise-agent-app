@@ -17,6 +17,7 @@ interface DashboardProps {
   health: AgentHealth | null;
   logs: LogEntry[];
   hasPrivateKey: boolean;
+  loadingProgress?: { percent: number; phase: string } | null;
   onStart: () => void;
   onStop: () => void;
 }
@@ -44,7 +45,7 @@ function generateMockChartData() {
   }));
 }
 
-export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, onStart, onStop }: DashboardProps) {
+export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, loadingProgress, onStart, onStop }: DashboardProps) {
   const chartData = useMemo(generateMockChartData, []);
 
   // Fetch system info when agent is running
@@ -58,12 +59,23 @@ export default function Dashboard({ status, metrics, health, logs, hasPrivateKey
     ? Math.round((systemInfo.vramUsed / systemInfo.vramTotal) * 100)
     : 0;
 
+  const fmtGB = (bytes: number) => (bytes / (1024 * 1024 * 1024)).toFixed(1);
+  const hasGpu = !!(systemInfo && systemInfo.vramTotal > 0);
+  const ramDetail = systemInfo
+    ? `${fmtGB(systemInfo.ramUsed)} / ${fmtGB(systemInfo.ramTotal)} GB`
+    : 'Idle';
+  const vramDetail = !systemInfo
+    ? 'Idle'
+    : hasGpu
+      ? `${fmtGB(systemInfo.vramUsed)} / ${fmtGB(systemInfo.vramTotal)} GB`
+      : 'No GPU';
+
   const recentLogs = logs.slice(-8);
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
       {/* Process Control */}
-      <ProcessControl status={status} hasPrivateKey={hasPrivateKey} onStart={onStart} onStop={onStop} />
+      <ProcessControl status={status} hasPrivateKey={hasPrivateKey} loadingProgress={loadingProgress} onStart={onStart} onStop={onStop} />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-4 gap-4">
@@ -152,14 +164,14 @@ export default function Dashboard({ status, metrics, health, logs, hasPrivateKey
             <GaugeRing
               value={ramPercent}
               label="RAM"
-              detail={status === 'running' ? (health?.layers ? `L${health.layers.start}-${health.layers.end}` : 'All') : 'Idle'}
+              detail={ramDetail}
               color="#06b6d4"
               size={90}
             />
             <GaugeRing
-              value={vramPercent}
+              value={hasGpu ? vramPercent : 0}
               label="VRAM"
-              detail={status === 'running' ? 'GPU' : 'Idle'}
+              detail={vramDetail}
               color="#8b5cf6"
               size={90}
             />
@@ -167,11 +179,11 @@ export default function Dashboard({ status, metrics, health, logs, hasPrivateKey
           <div className="flex items-center gap-4 text-[10px] text-[var(--text-dim)]">
             <span className="flex items-center gap-1">
               <Cpu size={10} />
-              {health?.mode ?? 'N/A'}
+              {systemInfo?.gpuName || health?.mode || '\u2014'}
             </span>
             <span className="flex items-center gap-1">
               <HardDrive size={10} />
-              {health?.model?.split('/').pop() ?? 'N/A'}
+              {health?.model?.split('/').pop() || '\u2014'}
             </span>
           </div>
         </div>

@@ -36,6 +36,7 @@ export function useAgentProcess() {
   const [metrics, setMetrics] = useState<AgentMetrics>(EMPTY_METRICS);
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loadingProgress, setLoadingProgress] = useState<{ percent: number; phase: string } | null>(null);
   const logIdRef = useRef(0);
   const pollRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -134,6 +135,7 @@ export function useAgentProcess() {
     setLogs([]);
     setMetrics(EMPTY_METRICS);
     setHealth(null);
+    setLoadingProgress(null);
     startTimeRef.current = Date.now();
 
     // Await Tauri invoke (resolves immediately if already loaded)
@@ -209,6 +211,7 @@ export function useAgentProcess() {
   useEffect(() => {
     let unlistenLog: (() => void) | null = null;
     let unlistenStatus: (() => void) | null = null;
+    let unlistenProgress: (() => void) | null = null;
 
     // Set up Tauri event listeners
     getListen().then((listen) => {
@@ -230,19 +233,35 @@ export function useAgentProcess() {
       }).then((unlisten: () => void) => {
         unlistenStatus = unlisten;
       });
+
+      listen('agent-loading-progress', (event: any) => {
+        const { percent, phase } = event.payload;
+        setLoadingProgress({ percent, phase });
+      }).then((unlisten: () => void) => {
+        unlistenProgress = unlisten;
+      });
     });
 
     return () => {
       stopPolling();
       if (unlistenLog) unlistenLog();
       if (unlistenStatus) unlistenStatus();
+      if (unlistenProgress) unlistenProgress();
     };
   }, [stopPolling, addLog]);
+
+  // Clear loading state when agent transitions to running/stopped/error
+  useEffect(() => {
+    if (status === 'running' || status === 'stopped' || status === 'error') {
+      startTimeRef.current = null;
+      setLoadingProgress(null);
+    }
+  }, [status]);
 
   const clearLogs = useCallback(() => {
     setLogs([]);
     logIdRef.current = 0;
   }, []);
 
-  return { status, metrics, health, logs, start, stop, addLog, clearLogs };
+  return { status, metrics, health, logs, loadingProgress, start, stop, addLog, clearLogs };
 }

@@ -5,6 +5,7 @@ import type { AgentStatus } from '../../types';
 interface ProcessControlProps {
   status: AgentStatus;
   hasPrivateKey: boolean;
+  loadingProgress?: { percent: number; phase: string } | null;
   onStart: () => void;
   onStop: () => void;
 }
@@ -25,7 +26,7 @@ function getProgressInfo(elapsed: number): { percent: number; step: string } {
   return { percent: Math.min(90 + (elapsed - 120) * 0.05, 98), step: 'Finalizing model setup...' };
 }
 
-export default function ProcessControl({ status, hasPrivateKey, onStart, onStop }: ProcessControlProps) {
+export default function ProcessControl({ status, hasPrivateKey, loadingProgress, onStart, onStop }: ProcessControlProps) {
   const canStart = (status === 'stopped' || status === 'error') && hasPrivateKey;
   const [elapsed, setElapsed] = useState(0);
   const intervalRef = useRef<number | null>(null);
@@ -49,7 +50,18 @@ export default function ProcessControl({ status, hasPrivateKey, onStart, onStop 
     };
   }, [status]);
 
-  const progress = status === 'starting' ? getProgressInfo(elapsed) : null;
+  const progress = status === 'starting'
+    ? (loadingProgress
+        ? {
+            percent: loadingProgress.phase === 'downloading'
+              ? 10 + loadingProgress.percent * 0.4
+              : 50 + loadingProgress.percent * 0.45,
+            step: loadingProgress.phase === 'downloading'
+              ? `Downloading model weights... (${Math.round(loadingProgress.percent)}%)`
+              : `Loading model into memory... (${Math.round(loadingProgress.percent)}%)`,
+          }
+        : getProgressInfo(elapsed))
+    : null;
 
   return (
     <div className="glass-card p-5">

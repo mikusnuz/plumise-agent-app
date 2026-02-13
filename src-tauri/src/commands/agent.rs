@@ -151,6 +151,11 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
             for (key, val) in &envs {
                 cmd.env(key, val);
             }
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
             cmd.stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
 
@@ -173,7 +178,17 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     use tokio::io::{AsyncBufReadExt, BufReader};
                     let reader = BufReader::new(stdout);
                     let mut lines = reader.lines();
+                    let mut last_progress_pct: i32 = -1;
                     while let Ok(Some(line)) = lines.next_line().await {
+                        // Filter loading progress lines → emit structured event
+                        if let Some(progress) = parse_loading_progress(&line) {
+                            let pct = progress.percent as i32;
+                            if pct != last_progress_pct {
+                                last_progress_pct = pct;
+                                let _ = app_handle_stdout.emit("agent-loading-progress", progress);
+                            }
+                            continue;
+                        }
                         let level = parse_log_level(&line);
                         let masked_line = mask_sensitive_data(&line);
                         let _ = app_handle_stdout.emit("agent-log", LogEvent {
@@ -189,7 +204,17 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     use tokio::io::{AsyncBufReadExt, BufReader};
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
+                    let mut last_progress_pct: i32 = -1;
                     while let Ok(Some(line)) = lines.next_line().await {
+                        // Filter loading progress lines → emit structured event
+                        if let Some(progress) = parse_loading_progress(&line) {
+                            let pct = progress.percent as i32;
+                            if pct != last_progress_pct {
+                                last_progress_pct = pct;
+                                let _ = app_handle_stderr.emit("agent-loading-progress", progress);
+                            }
+                            continue;
+                        }
                         let level = parse_log_level(&line);
                         let masked_line = mask_sensitive_data(&line);
                         let _ = app_handle_stderr.emit("agent-log", LogEvent {
@@ -252,10 +277,20 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     let http_port = config.http_port;
 
     tokio::spawn(async move {
+        let mut last_progress_pct: i32 = -1;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
                     if let Ok(line) = String::from_utf8(bytes) {
+                        // Filter loading progress lines → emit structured event
+                        if let Some(progress) = parse_loading_progress(&line) {
+                            let pct = progress.percent as i32;
+                            if pct != last_progress_pct {
+                                last_progress_pct = pct;
+                                let _ = app_clone.emit("agent-loading-progress", progress);
+                            }
+                            continue;
+                        }
                         let level = parse_log_level(&line);
                         let masked_line = mask_sensitive_data(&line);
                         let _ = app_clone.emit("agent-log", LogEvent {
@@ -266,6 +301,15 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                 }
                 CommandEvent::Stderr(bytes) => {
                     if let Ok(line) = String::from_utf8(bytes) {
+                        // Filter loading progress lines → emit structured event
+                        if let Some(progress) = parse_loading_progress(&line) {
+                            let pct = progress.percent as i32;
+                            if pct != last_progress_pct {
+                                last_progress_pct = pct;
+                                let _ = app_clone.emit("agent-loading-progress", progress);
+                            }
+                            continue;
+                        }
                         let level = parse_log_level(&line);
                         let masked_line = mask_sensitive_data(&line);
                         let _ = app_clone.emit("agent-log", LogEvent {
@@ -581,6 +625,13 @@ struct AgentStatusEvent {
     status: AgentStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoadingProgressEvent {
+    percent: f32,
+    phase: String,
+}
+
 /// Convert wei (as decimal string) to ETH-like display string using pure string manipulation.
 /// Avoids f64 precision loss for large balances.
 fn wei_to_display(wei_str: &str) -> String {
@@ -671,10 +722,45 @@ fn kill_pid(pid: u32) {
     }
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .output();
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/F", "/PID", &pid.to_string()]);
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output();
     }
+}
+
+/// Parse loading/download progress from tqdm-style output lines.
+/// Returns Some(LoadingProgressEvent) if the line is a progress indicator.
+fn parse_loading_progress(line: &str) -> Option<LoadingProgressEvent> {
+    let is_loading = line.contains("Loading weights");
+    let is_download = line.contains("Downloading");
+
+    if !is_loading && !is_download {
+        return None;
+    }
+
+    // Find "XX%" pattern - look for '%' and extract the number before it
+    if let Some(pct_idx) = line.find('%') {
+        let before = &line[..pct_idx];
+        let num_str: String = before
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        if let Ok(pct) = num_str.parse::<f32>() {
+            let phase = if is_download { "downloading" } else { "loading" };
+            return Some(LoadingProgressEvent {
+                percent: pct,
+                phase: phase.to_string(),
+            });
+        }
+    }
+
+    None
 }
 
 fn parse_log_level(line: &str) -> &str {

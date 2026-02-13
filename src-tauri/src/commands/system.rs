@@ -10,6 +10,7 @@ pub struct SystemInfo {
     pub ram_used: u64,
     pub vram_total: u64,
     pub vram_used: u64,
+    pub gpu_name: String,
 }
 
 #[tauri::command]
@@ -29,7 +30,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
     let ram_used = sys.used_memory(); // in bytes
 
     // Try to get GPU info via nvidia-smi
-    let (vram_total, vram_used) = get_gpu_info().await;
+    let (vram_total, vram_used, gpu_name) = get_gpu_info().await;
 
     Ok(SystemInfo {
         cpu_usage,
@@ -37,34 +38,47 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
         ram_used,
         vram_total,
         vram_used,
+        gpu_name,
     })
 }
 
-async fn get_gpu_info() -> (u64, u64) {
-    // Try nvidia-smi for NVIDIA GPUs
-    let result = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.total,memory.used",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .await;
+async fn get_gpu_info() -> (u64, u64, String) {
+    // Try nvidia-smi for NVIDIA GPUs (with hidden console window on Windows)
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.args([
+        "--query-gpu=memory.total,memory.used,name",
+        "--format=csv,noheader,nounits",
+    ]);
+
+    // Prevent console window from flashing on Windows
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let result = cmd.output().await;
 
     if let Ok(output) = result {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // Output format: "24576, 1234" (in MiB)
+            // Output format: "24576, 1234, NVIDIA GeForce RTX 5090" (in MiB)
             if let Some(line) = stdout.lines().next() {
                 let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 2 {
+                if parts.len() >= 3 {
                     let total = parts[0].parse::<u64>().unwrap_or(0) * 1024 * 1024; // MiB to bytes
                     let used = parts[1].parse::<u64>().unwrap_or(0) * 1024 * 1024;
-                    return (total, used);
+                    let name = parts[2].to_string();
+                    return (total, used, name);
+                } else if parts.len() >= 2 {
+                    let total = parts[0].parse::<u64>().unwrap_or(0) * 1024 * 1024;
+                    let used = parts[1].parse::<u64>().unwrap_or(0) * 1024 * 1024;
+                    return (total, used, "NVIDIA GPU".to_string());
                 }
             }
         }
     }
 
     // No GPU info available
-    (0, 0)
+    (0, 0, String::new())
 }

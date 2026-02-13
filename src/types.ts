@@ -23,6 +23,12 @@ export interface SystemInfo {
   ramUsed: number;
   vramTotal: number;
   vramUsed: number;
+  gpuName: string;
+}
+
+export interface LoadingProgress {
+  percent: number;
+  phase: string;
 }
 
 export interface AgentConfig {

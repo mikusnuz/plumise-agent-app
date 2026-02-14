@@ -183,16 +183,26 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     // Resolve DLL/backend directories for llama.cpp
-    // - Import DLLs (llama.dll, ggml.dll): found by Windows from EXE directory (sidecar handles this)
-    // - Backend plugins (ggml-cpu.dll, ggml-cuda.dll): loaded dynamically via GGML_BACKEND_DIR
+    // DLLs are now bundled as resources in the install root (same dir as sidecar exe).
+    // llama-server's default behavior: search for backend DLLs in its own exe directory.
+    // Belt-and-suspenders: also set GGML_BACKEND_DIR and PATH.
     let backend_search_dirs = {
         let mut dirs = Vec::new();
         if let Ok(resource_dir) = app.path().resource_dir() {
+            dirs.push(resource_dir.to_string_lossy().to_string());
             let bin_dir = resource_dir.join("binaries");
             if bin_dir.is_dir() {
                 dirs.push(bin_dir.to_string_lossy().to_string());
             }
-            dirs.push(resource_dir.to_string_lossy().to_string());
+        }
+        // Also check exe directory
+        if let Ok(exe_dir) = std::env::current_exe() {
+            if let Some(parent) = exe_dir.parent() {
+                let s = parent.to_string_lossy().to_string();
+                if !dirs.contains(&s) {
+                    dirs.push(s);
+                }
+            }
         }
         dirs
     };
@@ -205,8 +215,33 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         paths.join(if cfg!(windows) { ";" } else { ":" })
     };
 
+    // Diagnostic: log paths and check for backend DLLs
     log::info!("GGML_BACKEND_DIR={}", backend_path);
-    log::info!("DLL PATH={}", dll_path_env);
+    for dir in &backend_search_dirs {
+        let path = std::path::Path::new(dir);
+        if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                let dlls: Vec<String> = entries
+                    .flatten()
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .map(|ext| ext == "dll")
+                            .unwrap_or(false)
+                    })
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                log::info!("Dir {} has {} DLLs: {:?}", dir, dlls.len(), dlls);
+            }
+        } else {
+            log::warn!("Dir {} does not exist", dir);
+        }
+    }
+
+    let _ = app.emit("agent-log", LogEvent {
+        level: "INFO".to_string(),
+        message: format!("Backend search dirs: {:?}", backend_search_dirs),
+    });
 
     // Try sidecar first (Tauri handles import DLL resolution)
     let spawn_result = app

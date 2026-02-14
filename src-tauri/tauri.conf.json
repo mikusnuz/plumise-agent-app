@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Plumise Agent",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "identifier": "com.plumise.agent",
   "build": {
     "frontendDist": "../dist",
@@ -38,7 +38,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/llama-server"],
-    "resources": ["binaries/*.dll"],
+    "resources": [],
     "windows": {}
   },
   "plugins": {

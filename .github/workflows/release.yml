@@ -48,23 +48,27 @@ jobs:
           Copy-Item $serverExe.FullName "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
           Write-Host "Found llama-server at: $($serverExe.FullName)"
 
-          # Copy all DLLs from same directory as llama-server (ggml.dll, llama.dll, ggml-cuda.dll, etc.)
+          # Copy all DLLs to src-tauri/ root (NOT binaries/ subdirectory!)
+          # Tauri places sidecar in install root, resources preserve dir structure.
+          # By putting DLLs in src-tauri/ with resources: ["*.dll"], they end up
+          # in the same directory as the sidecar exe. llama-server finds them automatically.
           $serverDir = $serverExe.DirectoryName
           Get-ChildItem "$serverDir/*.dll" | ForEach-Object {
-            Copy-Item $_.FullName "src-tauri/binaries/"
+            Copy-Item $_.FullName "src-tauri/"
             Write-Host "  Bundled: $($_.Name)"
           }
 
           # Copy CUDA runtime DLLs (cublas, cublasLt, cudart)
           Get-ChildItem -Recurse cudart-bin -Filter "*.dll" | ForEach-Object {
-            Copy-Item $_.FullName "src-tauri/binaries/"
+            Copy-Item $_.FullName "src-tauri/"
             Write-Host "  Bundled (cudart): $($_.Name)"
           }
 
           $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe").Length / 1MB)
           Write-Host "llama-server binary: $sizeMB MB"
-          $dllCount = (Get-ChildItem "src-tauri/binaries/*.dll").Count
-          Write-Host "DLLs bundled: $dllCount"
+          $dllCount = (Get-ChildItem "src-tauri/*.dll").Count
+          Write-Host "DLLs bundled (in src-tauri root): $dllCount"
+          Get-ChildItem "src-tauri/*.dll" | ForEach-Object { Write-Host "  $_" }
         shell: pwsh
 
       - name: Setup Node.js 22
@@ -88,6 +92,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          # Override resources to bundle DLLs from src-tauri/ root (next to sidecar exe in install dir)
+          TAURI_CONFIG: '{"bundle":{"resources":["*.dll"]}}'
 
       - name: List build artifacts
         run: |

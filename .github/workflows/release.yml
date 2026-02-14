@@ -100,8 +100,9 @@ jobs:
           base="https://github.com/ggml-org/llama.cpp/releases/download/$ver"
 
           echo "Downloading llama-server $ver (macOS ARM64)..."
-          curl -L -o llama.zip "$base/llama-$ver-bin-macos-arm64.zip"
-          unzip llama.zip -d llama-bin
+          curl -L -o llama.tar.gz "$base/llama-$ver-bin-macos-arm64.tar.gz"
+          mkdir -p llama-bin
+          tar xzf llama.tar.gz -C llama-bin
 
           echo "=== Extracted contents ==="
           find llama-bin -type f | head -20

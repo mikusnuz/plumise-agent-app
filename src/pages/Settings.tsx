@@ -303,6 +303,23 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
 
           {showAdvanced && (
             <div className="space-y-4 pt-2">
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                  Inference API URL
+                </label>
+                <input
+                  type="text"
+                  className="input-field text-xs"
+                  value={config.inferenceApiUrl}
+                  onChange={(e) => update('inferenceApiUrl', e.target.value)}
+                  disabled={isRunning}
+                  placeholder="https://node-1.plumise.com/api"
+                />
+                <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                  WebSocket relay endpoint for inference requests. Leave empty to disable.
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-[var(--text-muted)] mb-1.5">

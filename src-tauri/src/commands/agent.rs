@@ -30,6 +30,8 @@ pub struct AgentConfig {
     pub parallel_slots: u32,
     #[serde(default = "default_ram_limit_gb")]
     pub ram_limit_gb: u32,
+    #[serde(default)]
+    pub inference_api_url: String,
 }
 
 fn default_model_file() -> String {
@@ -699,6 +701,29 @@ async fn on_agent_ready(
 
     let mut guard = state.lock().await;
     guard.background_tasks.push(reporter_handle);
+
+    // 4. Start WebSocket relay to Inference API (if configured)
+    if !config.inference_api_url.is_empty() {
+        let relay_url = config
+            .inference_api_url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://");
+        let relay_url = relay_url.trim_end_matches('/');
+        let ws_url = format!("{}/ws/agent-relay", relay_url);
+
+        let _ = app.emit("agent-log", LogEvent {
+            level: "INFO".to_string(),
+            message: format!("Starting relay connection to {}", ws_url),
+        });
+
+        let relay_handle = crate::relay::client::start_relay(
+            ws_url,
+            signing_key.clone(),
+            oracle_model.to_string(),
+            config.http_port,
+        );
+        guard.background_tasks.push(relay_handle);
+    }
 }
 
 // ---- Pre-flight Check ----
@@ -813,7 +838,7 @@ pub async fn preflight_check(
     // 5. HTTP port — auto-kill leftover llama-server if port is occupied
     let mut port_free =
         std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
-    let mut port_message = if port_free {
+    let port_message = if port_free {
         format!("Port {} available", config.http_port)
     } else {
         // Try to kill leftover process (likely a previous llama-server)

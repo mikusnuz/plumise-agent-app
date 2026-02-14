@@ -6,6 +6,7 @@ mod commands;
 mod inference;
 mod model;
 mod oracle;
+mod relay;
 
 use commands::agent::{AgentState, SharedAgentState};
 

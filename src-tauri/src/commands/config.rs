@@ -71,6 +71,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             ctx_size: 8192,
             parallel_slots: 4,
             ram_limit_gb: 0,
+            inference_api_url: "https://node-1.plumise.com/api".to_string(),
         });
     }
 

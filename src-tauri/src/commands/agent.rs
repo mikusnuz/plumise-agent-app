@@ -28,6 +28,8 @@ pub struct AgentConfig {
     pub ctx_size: u32,
     #[serde(default = "default_parallel_slots")]
     pub parallel_slots: u32,
+    #[serde(default = "default_ram_limit_gb")]
+    pub ram_limit_gb: u32,
 }
 
 fn default_model_file() -> String {
@@ -41,6 +43,9 @@ fn default_ctx_size() -> u32 {
 }
 fn default_parallel_slots() -> u32 {
     4
+}
+fn default_ram_limit_gb() -> u32 {
+    0 // 0 = auto (no limit)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -613,8 +618,12 @@ async fn on_agent_ready(
     // Agent wallet does not need PLM balance.
 
     // 1. Oracle registration (Oracle will sponsor on-chain registration if needed)
-    let sys = sysinfo::System::new_all();
-    let ram_mb = sys.total_memory() / (1024 * 1024);
+    let ram_mb = if config.ram_limit_gb > 0 {
+        (config.ram_limit_gb as u64) * 1024
+    } else {
+        let sys = sysinfo::System::new_all();
+        sys.total_memory() / (1024 * 1024)
+    };
 
     match oracle::registry::register(
         client,

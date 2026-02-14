@@ -36,7 +36,7 @@ export function useAgentProcess() {
   const [metrics, setMetrics] = useState<AgentMetrics>(EMPTY_METRICS);
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [loadingProgress, setLoadingProgress] = useState<{ percent: number; phase: string } | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState<{ percent: number; phase: string; downloadedBytes?: number; totalBytes?: number } | null>(null);
   const logIdRef = useRef(0);
   const pollRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -251,8 +251,8 @@ export function useAgentProcess() {
       });
 
       listen('agent-loading-progress', (event: any) => {
-        const { percent, phase } = event.payload;
-        setLoadingProgress({ percent, phase });
+        const { percent, phase, downloadedBytes, totalBytes } = event.payload;
+        setLoadingProgress({ percent, phase, downloadedBytes, totalBytes });
       }).then((unlisten: () => void) => {
         unlistenProgress = unlisten;
       });

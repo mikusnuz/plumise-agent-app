@@ -70,6 +70,7 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
   const [saved, setSaved] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [systemRamGb, setSystemRamGb] = useState(16);
 
   const isRunning = status === 'running' || status === 'starting';
 
@@ -79,6 +80,16 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
       setConfig(loaded);
       onConfigChange(loaded);
       setIsLoading(false);
+    });
+    // Detect system RAM
+    getInvoke().then((invoke) => {
+      if (invoke) {
+        invoke('get_system_info').then((info: any) => {
+          if (info?.ramTotal) {
+            setSystemRamGb(Math.floor(info.ramTotal / (1024 * 1024 * 1024)));
+          }
+        }).catch(() => {});
+      }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -249,6 +260,33 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 <option value={16384}>16384</option>
                 <option value={32768}>32768</option>
               </select>
+            </div>
+          </div>
+
+          {/* RAM Limit Slider */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-[var(--text-muted)]">
+                RAM Limit
+              </label>
+              <span className="text-xs font-mono text-[var(--text-primary)]">
+                {config.ramLimitGb === 0 ? `Auto (${systemRamGb} GB)` : `${config.ramLimitGb} GB`}
+              </span>
+            </div>
+            <input
+              type="range"
+              className="w-full accent-[var(--accent)]"
+              min={0}
+              max={systemRamGb}
+              step={1}
+              value={config.ramLimitGb}
+              onChange={(e) => update('ramLimitGb', parseInt(e.target.value))}
+              disabled={isRunning}
+            />
+            <div className="flex justify-between text-[10px] text-[var(--text-dim)] mt-1">
+              <span>Auto</span>
+              <span>{Math.floor(systemRamGb / 2)} GB</span>
+              <span>{systemRamGb} GB</span>
             </div>
           </div>
         </section>

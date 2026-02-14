@@ -5,7 +5,7 @@ import type { AgentStatus } from '../../types';
 interface ProcessControlProps {
   status: AgentStatus;
   hasPrivateKey: boolean;
-  loadingProgress?: { percent: number; phase: string } | null;
+  loadingProgress?: { percent: number; phase: string; downloadedBytes?: number; totalBytes?: number } | null;
   onStart: () => void;
   onStop: () => void;
 }
@@ -14,6 +14,12 @@ function formatElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+  return `${(bytes / 1e3).toFixed(0)} KB`;
 }
 
 // Estimated loading steps with time-based progress
@@ -57,7 +63,9 @@ export default function ProcessControl({ status, hasPrivateKey, loadingProgress,
               ? 10 + loadingProgress.percent * 0.4
               : 50 + loadingProgress.percent * 0.45,
             step: loadingProgress.phase === 'downloading'
-              ? `Downloading model weights... (${Math.round(loadingProgress.percent)}%)`
+              ? (loadingProgress.downloadedBytes && loadingProgress.totalBytes
+                  ? `Downloading model... ${formatBytes(loadingProgress.downloadedBytes)} / ${formatBytes(loadingProgress.totalBytes)} (${Math.round(loadingProgress.percent)}%)`
+                  : `Downloading model weights... (${Math.round(loadingProgress.percent)}%)`)
               : `Loading model into memory... (${Math.round(loadingProgress.percent)}%)`,
           }
         : getProgressInfo(elapsed))

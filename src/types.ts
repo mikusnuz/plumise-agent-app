@@ -29,6 +29,8 @@ export interface SystemInfo {
 export interface LoadingProgress {
   percent: number;
   phase: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
 }
 
 export interface AgentConfig {
@@ -42,6 +44,7 @@ export interface AgentConfig {
   gpuLayers: number;
   ctxSize: number;
   parallelSlots: number;
+  ramLimitGb: number;
 }
 
 export interface LogEntry {
@@ -62,4 +65,5 @@ export const DEFAULT_CONFIG: AgentConfig = {
   gpuLayers: 99,
   ctxSize: 8192,
   parallelSlots: 4,
+  ramLimitGb: 0,
 };

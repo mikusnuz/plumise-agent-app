@@ -76,7 +76,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-          TAURI_CONFIG: '{"bundle":{"targets":["msi"],"resources":["*.dll"]}}'
+          TAURI_CONFIG: '{"bundle":{"resources":["*.dll"]}}'
 
       - name: Collect Windows artifacts
         run: |
@@ -134,18 +134,17 @@ jobs:
           SIZE_MB=$(du -m "src-tauri/binaries/llama-server-aarch64-apple-darwin" | cut -f1)
           echo "llama-server: $SIZE_MB MB"
 
-          # Check for any .dylib files that might be needed
-          DYLIBS=$(find llama-bin -name "*.dylib" -type f 2>/dev/null)
-          if [ -n "$DYLIBS" ]; then
-            echo "Found dylibs:"
-            echo "$DYLIBS"
-            for dylib in $DYLIBS; do
-              cp "$dylib" src-tauri/
-              echo "  Bundled: $(basename $dylib)"
-            done
-          else
-            echo "No extra dylibs needed (Metal built-in)"
-          fi
+          # Copy dylibs with short names (e.g., libmtmd.0.dylib) by following symlinks
+          echo "Copying dylibs..."
+          LLAMA_DIR=$(find llama-bin -name "llama-server" -type f -exec dirname {} \;)
+          for dylib in $(find "$LLAMA_DIR" -name "lib*.0.dylib" -type l 2>/dev/null); do
+            cp -L "$dylib" src-tauri/
+            echo "  Bundled: $(basename $dylib) ($(du -h "src-tauri/$(basename $dylib)" | cut -f1))"
+          done
+
+          # Also add Resources rpath to llama-server for Tauri resource bundling
+          install_name_tool -add_rpath @loader_path/../Resources \
+            src-tauri/binaries/llama-server-aarch64-apple-darwin
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -170,14 +169,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           APPLE_SIGNING_IDENTITY: '-'
 
-      - name: Create DMG and collect artifacts
+      - name: Bundle dylibs and create DMG
         run: |
           set -e
           VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
 
           echo "=== Searching for .app bundle ==="
-          find src-tauri/target -name "*.app" -type d 2>/dev/null
-
           APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: .app bundle not found!"
@@ -186,10 +183,20 @@ jobs:
           fi
           echo "Found app: $APP_PATH"
 
-          # Verify ad-hoc codesign
+          # Copy dylibs into .app bundle (Resources dir — matched by @loader_path/../Resources rpath)
+          echo "=== Copying dylibs into bundle ==="
+          for dylib in src-tauri/lib*.dylib; do
+            cp "$dylib" "$APP_PATH/Contents/Resources/"
+            echo "  $(basename $dylib)"
+          done
+          echo "Resources contents:"
+          ls -lh "$APP_PATH/Contents/Resources/"
+
+          # Re-sign after modification (ad-hoc)
+          codesign --force --deep --sign - "$APP_PATH"
           codesign -dvv "$APP_PATH" 2>&1 || true
 
-          # Create clean DMG with ONLY the .app (no Applications shortcut, no .VolumeIcon.icns)
+          # Create clean DMG with ONLY the .app
           mkdir -p dmg-staging artifacts
           cp -R "$APP_PATH" dmg-staging/
           hdiutil create \

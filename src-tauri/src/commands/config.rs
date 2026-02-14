@@ -70,6 +70,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             gpu_layers: 99,
             ctx_size: 8192,
             parallel_slots: 4,
+            ram_limit_gb: 0,
         });
     }
 

@@ -6,6 +6,8 @@ use tauri::{AppHandle, Emitter};
 struct DownloadProgress {
     percent: f32,
     phase: String,
+    downloaded_bytes: u64,
+    total_bytes: u64,
 }
 
 /// Ensure the GGUF model file exists. Downloads from HuggingFace if missing.
@@ -125,6 +127,8 @@ async fn download_model(
                     DownloadProgress {
                         percent: pct as f32,
                         phase: "downloading".to_string(),
+                        downloaded_bytes: downloaded,
+                        total_bytes: total_size,
                     },
                 );
             }

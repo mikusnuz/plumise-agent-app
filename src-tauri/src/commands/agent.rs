@@ -168,6 +168,17 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         }
     };
 
+    // Kill any leftover llama-server on our port (e.g. from force-quit)
+    if let Some(killed) = kill_process_on_port(config.http_port) {
+        log::info!("Killed leftover process on port {}: {}", config.http_port, killed);
+        let _ = app.emit("agent-log", LogEvent {
+            level: "WARNING".to_string(),
+            message: format!("Killed leftover process on port {}: {}", config.http_port, killed),
+        });
+        // Brief pause so the OS releases the port
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
     // Build llama-server arguments
     let args: Vec<String> = vec![
         "-m".into(),
@@ -799,17 +810,31 @@ pub async fn preflight_check(
         }
     }
 
-    // 5. HTTP port
-    let port_free =
+    // 5. HTTP port — auto-kill leftover llama-server if port is occupied
+    let mut port_free =
         std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
+    let mut port_message = if port_free {
+        format!("Port {} available", config.http_port)
+    } else {
+        // Try to kill leftover process (likely a previous llama-server)
+        if let Some(killed) = kill_process_on_port(config.http_port) {
+            // Brief wait for OS to release the port
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            port_free =
+                std::net::TcpListener::bind(format!("127.0.0.1:{}", config.http_port)).is_ok();
+            if port_free {
+                format!("Port {} freed (killed leftover: {})", config.http_port, killed)
+            } else {
+                format!("Port {} still in use after killing {}", config.http_port, killed)
+            }
+        } else {
+            format!("Port {} in use by unknown process", config.http_port)
+        }
+    };
     checks.push(PreflightCheck {
         name: "HTTP Port".to_string(),
         passed: port_free,
-        message: if port_free {
-            format!("Port {} available", config.http_port)
-        } else {
-            format!("Port {} in use", config.http_port)
-        },
+        message: port_message,
     });
 
     // 6. GPU detection (cross-platform)
@@ -1174,6 +1199,103 @@ fn describe_exit_code(code: Option<i32>) -> String {
         }
         Some(c) => format!("llama-server exited with code {}", c),
         None => "llama-server was terminated by signal".to_string(),
+    }
+}
+
+/// Kill any process listening on the given port. Returns a description of what was killed.
+/// Only kills llama-server processes to avoid accidentally killing unrelated services.
+fn kill_process_on_port(port: u16) -> Option<String> {
+    #[cfg(unix)]
+    {
+        // lsof -ti :<port> returns PIDs listening on the port
+        let output = std::process::Command::new("lsof")
+            .args(["-ti", &format!(":{}", port)])
+            .output()
+            .ok()?;
+
+        let pids_str = String::from_utf8_lossy(&output.stdout);
+        let pids: Vec<&str> = pids_str.trim().lines().collect();
+        if pids.is_empty() {
+            return None;
+        }
+
+        let mut killed = Vec::new();
+        for pid in &pids {
+            let pid = pid.trim();
+            if pid.is_empty() {
+                continue;
+            }
+            // Check process name before killing — only kill llama-server
+            let ps_out = std::process::Command::new("ps")
+                .args(["-p", pid, "-o", "comm="])
+                .output()
+                .ok();
+            let proc_name = ps_out
+                .as_ref()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+
+            if proc_name.contains("llama-server") || proc_name.contains("llama_server") {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", pid])
+                    .output();
+                killed.push(format!("PID {} ({})", pid, proc_name));
+            } else {
+                log::warn!(
+                    "Port {} held by non-llama process: PID {} ({}), skipping",
+                    port, pid, proc_name
+                );
+            }
+        }
+
+        if killed.is_empty() {
+            None
+        } else {
+            Some(killed.join(", "))
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // netstat -ano | findstr :<port>
+        let output = std::process::Command::new("cmd")
+            .args(["/C", &format!("netstat -ano | findstr :{}", port)])
+            .output()
+            .ok()?;
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut killed = Vec::new();
+
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 5 && parts[1].contains(&format!(":{}", port)) {
+                let pid = parts[4];
+                // Check if it's llama-server before killing
+                let tasklist = std::process::Command::new("tasklist")
+                    .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+                    .output()
+                    .ok();
+                let proc_name = tasklist
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+
+                if proc_name.to_lowercase().contains("llama-server") || proc_name.to_lowercase().contains("llama_server") {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/PID", pid])
+                        .output();
+                    killed.push(format!("PID {}", pid));
+                } else {
+                    log::warn!("Port {} held by non-llama process: PID {}, skipping", port, pid);
+                }
+            }
+        }
+
+        if killed.is_empty() {
+            None
+        } else {
+            Some(killed.join(", "))
+        }
     }
 }
 

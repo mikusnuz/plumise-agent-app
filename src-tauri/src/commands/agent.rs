@@ -757,7 +757,28 @@ pub async fn preflight_check(
         },
     });
 
-    // 6. Model
+    // 6. GPU / CUDA driver
+    if config.gpu_layers > 0 {
+        let gpu_info = detect_nvidia_gpu();
+        match gpu_info {
+            Some((name, vram_mb)) => {
+                checks.push(PreflightCheck {
+                    name: "GPU".to_string(),
+                    passed: true,
+                    message: format!("{} ({} MB VRAM)", name, vram_mb),
+                });
+            }
+            None => {
+                checks.push(PreflightCheck {
+                    name: "GPU".to_string(),
+                    passed: false,
+                    message: "NVIDIA driver not detected. Install GPU drivers or set GPU Layers to 0 for CPU mode.".into(),
+                });
+            }
+        }
+    }
+
+    // 7. Model
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -929,6 +950,32 @@ fn parse_log_level(line: &str) -> &str {
     } else {
         "INFO"
     }
+}
+
+/// Detect NVIDIA GPU via nvidia-smi. Returns (gpu_name, vram_mb) or None.
+fn detect_nvidia_gpu() -> Option<(String, u64)> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next()?.trim().to_string();
+    // Format: "NVIDIA GeForce RTX 4090, 24564"
+    let mut parts = line.splitn(2, ',');
+    let name = parts.next()?.trim().to_string();
+    let vram: u64 = parts.next()?.trim().parse().unwrap_or(0);
+
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, vram))
 }
 
 fn describe_exit_code(code: Option<i32>) -> String {

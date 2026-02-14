@@ -184,11 +184,31 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
 
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
+    // Resolve resource dir for DLL search path (Windows CUDA DLLs)
+    let dll_path_env = {
+        let mut paths = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            let bin_dir = resource_dir.join("binaries");
+            if bin_dir.exists() {
+                paths.push(bin_dir.to_string_lossy().to_string());
+            }
+            paths.push(resource_dir.to_string_lossy().to_string());
+        }
+        if let Ok(sys_path) = std::env::var("PATH") {
+            paths.push(sys_path);
+        }
+        paths.join(if cfg!(windows) { ";" } else { ":" })
+    };
+
     // Try sidecar first, fallback to system PATH
     let spawn_result = app
         .shell()
         .sidecar("llama-server")
-        .and_then(|cmd| Ok(cmd.args(&args_ref)))
+        .and_then(|cmd| {
+            Ok(cmd
+                .args(&args_ref)
+                .envs([("PATH".to_string(), dll_path_env.clone())]))
+        })
         .and_then(|cmd| cmd.spawn());
 
     match spawn_result {
@@ -216,6 +236,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
             use tokio::process::Command;
             let mut cmd = Command::new("llama-server");
             cmd.args(&args_ref);
+            cmd.env("PATH", &dll_path_env);
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -323,7 +344,7 @@ async fn handle_sidecar_events(
                     });
                     let _ = app.emit("agent-log", LogEvent {
                         level: "ERROR".to_string(),
-                        message: format!("llama-server exited: code={:?}", payload.code),
+                        message: describe_exit_code(payload.code),
                     });
                 }
                 break;
@@ -907,6 +928,25 @@ fn parse_log_level(line: &str) -> &str {
         "DEBUG"
     } else {
         "INFO"
+    }
+}
+
+fn describe_exit_code(code: Option<i32>) -> String {
+    match code {
+        // 0xC0000135 = STATUS_DLL_NOT_FOUND (Windows)
+        Some(-1073741515) => {
+            "llama-server failed: Required DLL not found. \
+             Please install NVIDIA CUDA Toolkit 12.x or ensure CUDA drivers are up to date."
+                .to_string()
+        }
+        // 0xC0000005 = ACCESS_VIOLATION
+        Some(-1073741819) => {
+            "llama-server crashed: Access violation. \
+             Try reducing GPU layers (gpu_layers=0 for CPU-only mode)."
+                .to_string()
+        }
+        Some(c) => format!("llama-server exited with code {}", c),
+        None => "llama-server was terminated by signal".to_string(),
     }
 }
 

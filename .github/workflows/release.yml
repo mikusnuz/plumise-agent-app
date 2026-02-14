@@ -163,30 +163,49 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Build Tauri (macOS DMG)
-        run: npx tauri build --verbose --bundles dmg
+      - name: Build Tauri (macOS App)
+        run: npx tauri build --verbose --bundles app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          APPLE_SIGNING_IDENTITY: '-'
 
-      - name: Collect macOS artifacts
+      - name: Create DMG and collect artifacts
         run: |
-          echo "=== Full target directory structure ==="
-          find src-tauri/target -maxdepth 4 -type d 2>/dev/null | head -50
-          echo "=== Searching for bundle output ==="
-          find src-tauri/target -name "bundle" -type d 2>/dev/null
-          find src-tauri/target -name "*.dmg" -type f 2>/dev/null
-          find src-tauri/target -name "*.app" -type d 2>/dev/null
-          find src-tauri/target -name "*.tar.gz" -type f 2>/dev/null
+          set -e
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
 
-          mkdir -p artifacts
-          find src-tauri/target -name "*.dmg" -type f -exec cp {} artifacts/ \;
-          find src-tauri/target -name "*.app.tar.gz" -type f -exec cp {} artifacts/ \;
+          echo "=== Searching for .app bundle ==="
+          find src-tauri/target -name "*.app" -type d 2>/dev/null
+
+          APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app bundle not found!"
+            find src-tauri/target -maxdepth 5 -type d 2>/dev/null | head -40
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+
+          # Verify ad-hoc codesign
+          codesign -dvv "$APP_PATH" 2>&1 || true
+
+          # Create clean DMG with ONLY the .app (no Applications shortcut, no .VolumeIcon.icns)
+          mkdir -p dmg-staging artifacts
+          cp -R "$APP_PATH" dmg-staging/
+          hdiutil create \
+            -volname "Plumise Agent" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "artifacts/Plumise-Agent_${VERSION}_aarch64.dmg"
+
+          echo "DMG created: $(ls -lh artifacts/*.dmg)"
+
+          # Collect updater artifacts (.tar.gz + .sig)
+          find src-tauri/target -name "*.app.tar.gz" ! -name "*.sig" -type f -exec cp {} artifacts/ \;
           find src-tauri/target -name "*.app.tar.gz.sig" -type f -exec cp {} artifacts/ \;
 
           echo "=== Collected artifacts ==="
-          ls -lh artifacts/ || echo "No artifacts collected!"
-          [ "$(ls -A artifacts/)" ] || exit 1
+          ls -lh artifacts/
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

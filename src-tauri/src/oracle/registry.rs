@@ -12,6 +12,7 @@ pub async fn register(
     ram_mb: u64,
     vram_mb: u64,
     device: &str,
+    external_ip: &str,
 ) -> Result<(), String> {
     let address = address_from_key(signing_key);
     let timestamp = std::time::SystemTime::now()
@@ -19,7 +20,7 @@ pub async fn register(
         .map_err(|e| format!("Time error: {}", e))?
         .as_secs();
 
-    let http_endpoint = format!("http://127.0.0.1:{}", http_port);
+    let http_endpoint = format!("http://{}:{}", external_ip, http_port);
 
     // Field order MUST match Oracle's verifyRegistrationSignature
     // serde serializes struct fields in declaration order

@@ -173,7 +173,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         "-m".into(),
         model_path.to_string_lossy().to_string(),
         "--host".into(),
-        "127.0.0.1".into(),
+        "0.0.0.0".into(),
         "--port".into(),
         config.http_port.to_string(),
         "-ngl".into(),
@@ -617,6 +617,18 @@ async fn on_agent_ready(
     // On-chain registration and heartbeats are handled by Oracle via sponsor flow.
     // Agent wallet does not need PLM balance.
 
+    // Detect LAN IP for external access (Oracle/inference API need to reach us)
+    let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    log::info!("Detected local IP: {}", local_ip);
+    let _ = app.emit("agent-log", LogEvent {
+        level: "INFO".to_string(),
+        message: format!("Local endpoint: http://{}:{}", local_ip, config.http_port),
+    });
+
+    // Oracle model name must match what inference API queries (openai/gpt-oss-20b)
+    // config.model is the HuggingFace repo for download (ggml-org/gpt-oss-20b-GGUF)
+    let oracle_model = "openai/gpt-oss-20b";
+
     // 1. Oracle registration (Oracle will sponsor on-chain registration if needed)
     let ram_mb = if config.ram_limit_gb > 0 {
         (config.ram_limit_gb as u64) * 1024
@@ -629,11 +641,12 @@ async fn on_agent_ready(
         client,
         &config.oracle_url,
         &signing_key,
-        &config.model,
+        oracle_model,
         config.http_port,
         ram_mb,
         0,
         &config.device,
+        &local_ip,
     )
     .await
     {
@@ -654,7 +667,7 @@ async fn on_agent_ready(
 
     // 2. Report ready
     if let Err(e) =
-        oracle::registry::report_ready(client, &config.oracle_url, &signing_key, &config.model)
+        oracle::registry::report_ready(client, &config.oracle_url, &signing_key, oracle_model)
             .await
     {
         log::warn!("Oracle ready report failed: {}", e);
@@ -1162,6 +1175,21 @@ fn describe_exit_code(code: Option<i32>) -> String {
         Some(c) => format!("llama-server exited with code {}", c),
         None => "llama-server was terminated by signal".to_string(),
     }
+}
+
+/// Discover the machine's LAN IP by connecting a UDP socket to a remote address.
+/// The OS picks the correct local interface without actually sending data.
+fn get_local_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    // Connect to a public IP — no data is sent, just determines the route
+    socket.connect("8.8.8.8:80").ok()?;
+    let addr = socket.local_addr().ok()?;
+    let ip = addr.ip().to_string();
+    // Don't return loopback
+    if ip == "127.0.0.1" || ip == "::1" {
+        return None;
+    }
+    Some(ip)
 }
 
 fn mask_sensitive_data(line: &str) -> String {

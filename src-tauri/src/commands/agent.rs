@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
 use crate::chain;
@@ -75,8 +73,7 @@ pub struct AgentMetricsResponse {
 // ---- State ----
 
 pub struct AgentState {
-    pub process: Option<CommandChild>,
-    pub fallback_pid: Option<u32>,
+    pub pid: Option<u32>,
     pub status: AgentStatus,
     pub http_port: u16,
     pub start_time: Option<std::time::Instant>,
@@ -88,8 +85,7 @@ pub struct AgentState {
 impl Default for AgentState {
     fn default() -> Self {
         Self {
-            process: None,
-            fallback_pid: None,
+            pid: None,
             status: AgentStatus::Stopped,
             http_port: 18920,
             start_time: None,
@@ -184,126 +180,101 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
 
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    // Resolve resource dir for DLL search path (Windows CUDA DLLs)
+    // Find llama-server binary: search resource dir, then system PATH
+    let (exe_path, exe_dir) = find_llama_server(&app)?;
+    log::info!("llama-server binary: {}", exe_path.display());
+    log::info!("Working dir (DLL search): {}", exe_dir.display());
+
+    // Build PATH including the binary's directory for DLL dependencies
     let dll_path_env = {
-        let mut paths = Vec::new();
-        if let Ok(resource_dir) = app.path().resource_dir() {
-            let bin_dir = resource_dir.join("binaries");
-            if bin_dir.exists() {
-                paths.push(bin_dir.to_string_lossy().to_string());
-            }
-            paths.push(resource_dir.to_string_lossy().to_string());
-        }
+        let mut paths = vec![exe_dir.to_string_lossy().to_string()];
         if let Ok(sys_path) = std::env::var("PATH") {
             paths.push(sys_path);
         }
         paths.join(if cfg!(windows) { ";" } else { ":" })
     };
 
-    // Try sidecar first, fallback to system PATH
-    let spawn_result = app
-        .shell()
-        .sidecar("llama-server")
-        .and_then(|cmd| {
-            Ok(cmd
-                .args(&args_ref)
-                .envs([("PATH".to_string(), dll_path_env.clone())]))
-        })
-        .and_then(|cmd| cmd.spawn());
+    // Spawn llama-server with current_dir set to binary's directory
+    // (llama.cpp loads ggml-cpu.dll / ggml-cuda.dll from the exe's directory)
+    use tokio::process::Command;
+    let mut cmd = Command::new(&exe_path);
+    cmd.args(&args_ref);
+    cmd.current_dir(&exe_dir);
+    cmd.env("PATH", &dll_path_env);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
-    match spawn_result {
-        Ok((rx, child)) => {
-            log::info!("llama-server spawned via sidecar, PID: {}", child.pid());
+    let mut tokio_child = cmd
+        .spawn()
+        .map_err(|e| {
+            log::error!("Failed to spawn llama-server: {}", e);
+            format!("Failed to spawn llama-server: {}", e)
+        })?;
 
-            let mut guard = state.lock().await;
-            guard.process = Some(child);
-            guard.start_time = Some(std::time::Instant::now());
-            guard.model_path = Some(model_path.clone());
-            guard.agent_address = Some(agent_address.clone());
-            drop(guard);
+    let pid = tokio_child.id();
+    log::info!("llama-server spawned, PID: {:?}", pid);
 
-            // Handle sidecar events
-            let state_ev = Arc::clone(&state.inner());
-            let app_ev = app.clone();
+    // Stream stdout/stderr to frontend
+    for stream in [
+        tokio_child.stdout.take().map(StreamKind::Out),
+        tokio_child.stderr.take().map(StreamKind::Err),
+    ] {
+        if let Some(kind) = stream {
+            let app_h = app.clone();
             tokio::spawn(async move {
-                handle_sidecar_events(rx, state_ev, app_ev).await;
-            });
-        }
-        Err(e) => {
-            log::warn!("Sidecar spawn failed ({}), trying system PATH", e);
-
-            // Fallback: system PATH
-            use tokio::process::Command;
-            let mut cmd = Command::new("llama-server");
-            cmd.args(&args_ref);
-            cmd.env("PATH", &dll_path_env);
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                cmd.creation_flags(0x08000000);
-            }
-            cmd.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-
-            let mut tokio_child = cmd
-                .spawn()
-                .map_err(|e| format!("Failed to spawn llama-server: {}", e))?;
-
-            let pid = tokio_child.id();
-            log::info!("llama-server spawned via PATH, PID: {:?}", pid);
-
-            // Stream stdout/stderr
-            for stream in [tokio_child.stdout.take().map(StreamKind::Out), tokio_child.stderr.take().map(StreamKind::Err)] {
-                if let Some(kind) = stream {
-                    let app_h = app.clone();
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut last_pct: i32 = -1;
-                        match kind {
-                            StreamKind::Out(s) => {
-                                let mut lines = BufReader::new(s).lines();
-                                while let Ok(Some(line)) = lines.next_line().await {
-                                    handle_log_line(&line, &app_h, &mut last_pct);
-                                }
-                            }
-                            StreamKind::Err(s) => {
-                                let mut lines = BufReader::new(s).lines();
-                                while let Ok(Some(line)) = lines.next_line().await {
-                                    handle_log_line(&line, &app_h, &mut last_pct);
-                                }
-                            }
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut last_pct: i32 = -1;
+                match kind {
+                    StreamKind::Out(s) => {
+                        let mut lines = BufReader::new(s).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            handle_log_line(&line, &app_h, &mut last_pct);
                         }
-                    });
-                }
-            }
-
-            {
-                let mut guard = state.lock().await;
-                guard.fallback_pid = pid;
-                guard.start_time = Some(std::time::Instant::now());
-                guard.model_path = Some(model_path.clone());
-                guard.agent_address = Some(agent_address.clone());
-            }
-
-            // Exit watcher
-            let state_exit = Arc::clone(&state.inner());
-            let app_exit = app.clone();
-            tokio::spawn(async move {
-                if let Ok(exit_status) = tokio_child.wait().await {
-                    log::warn!("llama-server exited: {:?}", exit_status);
-                    let mut guard = state_exit.lock().await;
-                    if guard.status != AgentStatus::Stopped && guard.status != AgentStatus::Stopping
-                    {
-                        guard.status = AgentStatus::Error;
-                        guard.fallback_pid = None;
-                        let _ = app_exit.emit("agent-status", AgentStatusEvent {
-                            status: AgentStatus::Error,
-                        });
+                    }
+                    StreamKind::Err(s) => {
+                        let mut lines = BufReader::new(s).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            handle_log_line(&line, &app_h, &mut last_pct);
+                        }
                     }
                 }
             });
         }
     }
+
+    {
+        let mut guard = state.lock().await;
+        guard.pid = pid;
+        guard.start_time = Some(std::time::Instant::now());
+        guard.model_path = Some(model_path.clone());
+        guard.agent_address = Some(agent_address.clone());
+    }
+
+    // Exit watcher
+    let state_exit = Arc::clone(&state.inner());
+    let app_exit = app.clone();
+    tokio::spawn(async move {
+        if let Ok(exit_status) = tokio_child.wait().await {
+            log::warn!("llama-server exited: {:?}", exit_status);
+            let mut guard = state_exit.lock().await;
+            if guard.status != AgentStatus::Stopped && guard.status != AgentStatus::Stopping {
+                guard.status = AgentStatus::Error;
+                guard.pid = None;
+                let _ = app_exit.emit("agent-status", AgentStatusEvent {
+                    status: AgentStatus::Error,
+                });
+                let _ = app_exit.emit("agent-log", LogEvent {
+                    level: "ERROR".to_string(),
+                    message: describe_exit_code(exit_status.code()),
+                });
+            }
+        }
+    });
 
     // Spawn health polling (triggers chain/oracle registration when ready)
     let state_poll = Arc::clone(&state.inner());
@@ -318,40 +289,6 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
 enum StreamKind {
     Out(tokio::process::ChildStdout),
     Err(tokio::process::ChildStderr),
-}
-
-async fn handle_sidecar_events(
-    mut rx: tauri::async_runtime::Receiver<CommandEvent>,
-    state: SharedAgentState,
-    app: AppHandle,
-) {
-    let mut last_pct: i32 = -1;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                if let Ok(line) = String::from_utf8(bytes) {
-                    handle_log_line(&line, &app, &mut last_pct);
-                }
-            }
-            CommandEvent::Terminated(payload) => {
-                log::warn!("llama-server terminated: {:?}", payload);
-                let mut guard = state.lock().await;
-                if guard.status != AgentStatus::Stopped && guard.status != AgentStatus::Stopping {
-                    guard.status = AgentStatus::Error;
-                    guard.process = None;
-                    let _ = app.emit("agent-status", AgentStatusEvent {
-                        status: AgentStatus::Error,
-                    });
-                    let _ = app.emit("agent-log", LogEvent {
-                        level: "ERROR".to_string(),
-                        message: describe_exit_code(payload.code),
-                    });
-                }
-                break;
-            }
-            _ => {}
-        }
-    }
 }
 
 #[tauri::command]
@@ -374,10 +311,7 @@ pub async fn stop_agent(app: AppHandle) -> Result<(), String> {
     // Force kill process
     {
         let mut guard = state.lock().await;
-        if let Some(child) = guard.process.take() {
-            let _ = child.kill();
-        }
-        if let Some(pid) = guard.fallback_pid.take() {
+        if let Some(pid) = guard.pid.take() {
             kill_pid(pid);
         }
         guard.status = AgentStatus::Stopped;
@@ -953,6 +887,86 @@ fn parse_log_level(line: &str) -> &str {
 }
 
 /// Detect NVIDIA GPU via nvidia-smi. Returns (gpu_name, vram_mb) or None.
+/// Find the llama-server binary. Returns (exe_path, exe_directory).
+/// Search order:
+///   1. Tauri resource dir / binaries/ (installed MSI)
+///   2. Tauri resource dir / (flat resource layout)
+///   3. System PATH
+fn find_llama_server(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let exe_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+
+    // Search in Tauri resource directories
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        // 1. Check binaries/ subdirectory (preserves externalBin structure)
+        let bin_dir = resource_dir.join("binaries");
+        if bin_dir.is_dir() {
+            // Look for exact name or triple-suffixed name
+            if let Ok(entries) = std::fs::read_dir(&bin_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("llama-server") && !name.ends_with(".dll") {
+                        let path = entry.path();
+                        if path.is_file() {
+                            log::info!("Found sidecar in binaries/: {}", path.display());
+                            return Ok((path, bin_dir));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check resource dir root (flat layout)
+        if let Ok(entries) = std::fs::read_dir(&resource_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("llama-server") && !name.ends_with(".dll") {
+                    let path = entry.path();
+                    if path.is_file() {
+                        log::info!("Found sidecar in resource root: {}", path.display());
+                        return Ok((path, resource_dir));
+                    }
+                }
+            }
+        }
+
+        log::warn!(
+            "llama-server not found in resource dir: {}",
+            resource_dir.display()
+        );
+    }
+
+    // 3. Fallback: system PATH
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    if let Ok(output) = std::process::Command::new(which_cmd)
+        .arg(exe_name)
+        .output()
+    {
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !path_str.is_empty() {
+                let path = PathBuf::from(&path_str);
+                let dir = path.parent().unwrap_or(&path).to_path_buf();
+                log::info!("Found llama-server in PATH: {}", path.display());
+                return Ok((path, dir));
+            }
+        }
+    }
+
+    Err(
+        "llama-server not found. Reinstall the app or add llama-server to your system PATH."
+            .into(),
+    )
+}
+
 fn detect_nvidia_gpu() -> Option<(String, u64)> {
     let output = std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])

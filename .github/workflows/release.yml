@@ -164,17 +164,19 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Build Tauri (macOS DMG)
-        run: npx tauri build
+        run: npx tauri build --verbose --bundles dmg
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-          TAURI_CONFIG: '{"bundle":{"targets":["dmg"]}}'
 
       - name: Collect macOS artifacts
         run: |
+          echo "=== Full target directory structure ==="
+          find src-tauri/target -maxdepth 4 -type d 2>/dev/null | head -50
           echo "=== Searching for bundle output ==="
           find src-tauri/target -name "bundle" -type d 2>/dev/null
           find src-tauri/target -name "*.dmg" -type f 2>/dev/null
+          find src-tauri/target -name "*.app" -type d 2>/dev/null
           find src-tauri/target -name "*.tar.gz" -type f 2>/dev/null
 
           mkdir -p artifacts

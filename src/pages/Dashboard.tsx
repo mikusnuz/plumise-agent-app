@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Zap, Hash, Clock, Gauge, Cpu, HardDrive,
 } from 'lucide-react';
@@ -47,6 +47,33 @@ function generateMockChartData() {
 
 export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, loadingProgress, onStart, onStop }: DashboardProps) {
   const chartData = useMemo(generateMockChartData, []);
+
+  // Smooth uptime counter: interpolate between 3-second server polls
+  const [displayUptime, setDisplayUptime] = useState(0);
+  const uptimeBaseRef = useRef<{ serverUptime: number; timestamp: number } | null>(null);
+
+  // Sync base when server uptime changes
+  useEffect(() => {
+    if (metrics.uptimeSeconds > 0) {
+      uptimeBaseRef.current = { serverUptime: metrics.uptimeSeconds, timestamp: Date.now() };
+    }
+  }, [metrics.uptimeSeconds]);
+
+  // Tick every second for smooth display
+  useEffect(() => {
+    if (status !== 'running') {
+      setDisplayUptime(0);
+      uptimeBaseRef.current = null;
+      return;
+    }
+    const interval = setInterval(() => {
+      if (uptimeBaseRef.current) {
+        const elapsed = (Date.now() - uptimeBaseRef.current.timestamp) / 1000;
+        setDisplayUptime(Math.floor(uptimeBaseRef.current.serverUptime + elapsed));
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [status]);
 
   // Fetch system info when agent is running
   const { systemInfo } = useSystemInfo(status === 'running' || status === 'starting');
@@ -100,7 +127,7 @@ export default function Dashboard({ status, metrics, health, logs, hasPrivateKey
         <StatCard
           icon={Clock}
           label="Uptime"
-          value={formatUptime(metrics.uptimeSeconds)}
+          value={formatUptime(displayUptime)}
           color="#4ade80"
         />
       </div>

@@ -594,7 +594,7 @@ async fn poll_agent_health(state: SharedAgentState, app: AppHandle, config: Agen
     }
 }
 
-/// Called when llama-server health reports "ok" — registers on-chain and with Oracle
+/// Called when llama-server health reports "ok" — registers with Oracle (which handles on-chain registration)
 async fn on_agent_ready(
     state: &SharedAgentState,
     app: &AppHandle,
@@ -609,32 +609,14 @@ async fn on_agent_ready(
         }
     };
 
-    // 1. On-chain registration
-    let model_hash = chain::crypto::keccak256(config.model.as_bytes());
-    let tx_sender =
-        chain::tx::TxSender::new(config.chain_rpc.clone(), 41956, signing_key.clone());
+    // On-chain registration and heartbeats are handled by Oracle via sponsor flow.
+    // Agent wallet does not need PLM balance.
 
-    match chain::precompiles::register_agent(&tx_sender, "plumise-agent-app", model_hash).await {
-        Ok(hash) => {
-            let _ = app.emit("agent-log", LogEvent {
-                level: "INFO".to_string(),
-                message: format!("On-chain registration: {}", hash),
-            });
-        }
-        Err(e) => {
-            log::warn!("On-chain registration failed (non-fatal): {}", e);
-            let _ = app.emit("agent-log", LogEvent {
-                level: "WARNING".to_string(),
-                message: format!("On-chain registration skipped: {}", e),
-            });
-        }
-    }
-
-    // 2. Oracle registration
+    // 1. Oracle registration (Oracle will sponsor on-chain registration if needed)
     let sys = sysinfo::System::new_all();
     let ram_mb = sys.total_memory() / (1024 * 1024);
 
-    if let Err(e) = oracle::registry::register(
+    match oracle::registry::register(
         client,
         &config.oracle_url,
         &signing_key,
@@ -646,38 +628,35 @@ async fn on_agent_ready(
     )
     .await
     {
-        log::warn!("Oracle registration failed (non-fatal): {}", e);
-        let _ = app.emit("agent-log", LogEvent {
-            level: "WARNING".to_string(),
-            message: format!("Oracle registration skipped: {}", e),
-        });
+        Ok(()) => {
+            let _ = app.emit("agent-log", LogEvent {
+                level: "INFO".to_string(),
+                message: "Registered with Oracle (on-chain + pipeline)".to_string(),
+            });
+        }
+        Err(e) => {
+            log::warn!("Oracle registration failed (non-fatal): {}", e);
+            let _ = app.emit("agent-log", LogEvent {
+                level: "WARNING".to_string(),
+                message: format!("Oracle registration failed: {}", e),
+            });
+        }
     }
 
-    // 3. Report ready
+    // 2. Report ready
     if let Err(e) =
         oracle::registry::report_ready(client, &config.oracle_url, &signing_key, &config.model)
             .await
     {
         log::warn!("Oracle ready report failed: {}", e);
+    } else {
+        let _ = app.emit("agent-log", LogEvent {
+            level: "INFO".to_string(),
+            message: "Agent marked as ready".to_string(),
+        });
     }
 
-    // 4. Spawn background tasks
-    let heartbeat_handle = {
-        let tx_sender =
-            chain::tx::TxSender::new(config.chain_rpc.clone(), 41956, signing_key.clone());
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                match chain::precompiles::heartbeat(&tx_sender).await {
-                    Ok(_) => log::debug!("Heartbeat sent"),
-                    Err(e) => log::warn!("Heartbeat failed: {}", e),
-                }
-            }
-        })
-    };
-
+    // 3. Spawn background tasks (metrics reporter only — heartbeats handled by Oracle)
     let reporter_handle = crate::oracle::reporter::start_reporter(
         client.clone(),
         config.oracle_url.clone(),
@@ -686,7 +665,6 @@ async fn on_agent_ready(
     );
 
     let mut guard = state.lock().await;
-    guard.background_tasks.push(heartbeat_handle);
     guard.background_tasks.push(reporter_handle);
 }
 

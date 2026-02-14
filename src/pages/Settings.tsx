@@ -82,16 +82,17 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save on config changes (debounced)
+  // Auto-save on config changes (debounced) and propagate to parent
   useEffect(() => {
     if (isLoading) return;
 
     const timer = setTimeout(() => {
       saveConfig(config);
+      onConfigChange(config);
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [config, isLoading]);
+  }, [config, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = () => {
     saveConfig(config);

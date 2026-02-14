@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import TitleBar from './components/layout/TitleBar';
 import Sidebar from './components/layout/Sidebar';
@@ -14,10 +14,33 @@ function isValidPrivateKey(key: string): boolean {
   return key.startsWith('0x') && key.length === 66;
 }
 
+// Eagerly load config from Tauri on app init (before Settings page is visited)
+let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  invokePromise = import('@tauri-apps/api/core').then((mod) => mod.invoke);
+}
+
 export default function App() {
   const { status, metrics, health, logs, loadingProgress, start, stop, clearLogs } = useAgentProcess();
   const configRef = useRef<AgentConfig>(DEFAULT_CONFIG);
   const [hasPrivateKey, setHasPrivateKey] = useState(false);
+
+  // Load config eagerly on mount (so private key is available before visiting Settings)
+  useEffect(() => {
+    (async () => {
+      try {
+        const invoke = invokePromise ? await invokePromise : null;
+        if (invoke) {
+          const loaded = await invoke('load_config') as AgentConfig;
+          const config = { ...DEFAULT_CONFIG, ...loaded };
+          configRef.current = config;
+          setHasPrivateKey(isValidPrivateKey(config.privateKey));
+        }
+      } catch {
+        // Config load failed, use defaults
+      }
+    })();
+  }, []);
 
   const handleStart = useCallback(() => {
     start(configRef.current);

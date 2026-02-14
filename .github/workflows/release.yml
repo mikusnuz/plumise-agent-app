@@ -157,8 +157,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -174,18 +172,19 @@ jobs:
 
       - name: Collect macOS artifacts
         run: |
-          echo "=== Bundle directory ==="
-          find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle dir found"
+          echo "=== Searching for bundle output ==="
+          find src-tauri/target -name "bundle" -type d 2>/dev/null
+          find src-tauri/target -name "*.dmg" -type f 2>/dev/null
+          find src-tauri/target -name "*.tar.gz" -type f 2>/dev/null
 
           mkdir -p artifacts
-          # Copy DMG
-          find src-tauri/target/release/bundle -name "*.dmg" -exec cp {} artifacts/ \;
-          # Copy updater archives and signatures
-          find src-tauri/target/release/bundle -name "*.tar.gz" -exec cp {} artifacts/ \;
-          find src-tauri/target/release/bundle -name "*.tar.gz.sig" -exec cp {} artifacts/ \;
+          find src-tauri/target -name "*.dmg" -type f -exec cp {} artifacts/ \;
+          find src-tauri/target -name "*.app.tar.gz" -type f -exec cp {} artifacts/ \;
+          find src-tauri/target -name "*.app.tar.gz.sig" -type f -exec cp {} artifacts/ \;
 
           echo "=== Collected artifacts ==="
-          ls -lh artifacts/
+          ls -lh artifacts/ || echo "No artifacts collected!"
+          [ "$(ls -A artifacts/)" ] || exit 1
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

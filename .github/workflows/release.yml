@@ -9,11 +9,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout plumise-agent-app
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Download llama-server (CUDA 12.4)
@@ -21,54 +21,38 @@ jobs:
           $ver = "b8022"
           $base = "https://github.com/ggml-org/llama.cpp/releases/download/$ver"
 
-          # Download main binary package
-          Write-Host "Downloading llama-server $ver..."
+          Write-Host "Downloading llama-server $ver (CUDA 12.4)..."
           Invoke-WebRequest -Uri "$base/llama-$ver-bin-win-cuda-12.4-x64.zip" -OutFile llama.zip
 
-          # Download CUDA runtime DLLs (separate package)
           Write-Host "Downloading CUDA runtime DLLs..."
           Invoke-WebRequest -Uri "$base/cudart-llama-bin-win-cuda-12.4-x64.zip" -OutFile cudart.zip
 
-          # Extract both
           Expand-Archive llama.zip -DestinationPath llama-bin
           Expand-Archive cudart.zip -DestinationPath cudart-bin
 
-          # Debug: show extracted structure
-          Write-Host "=== llama-bin contents ==="
-          Get-ChildItem -Recurse llama-bin -File | Select-Object -First 30 FullName
-
           New-Item -Path "src-tauri/binaries" -ItemType Directory -Force
 
-          # Find and copy llama-server.exe (search recursively)
           $serverExe = Get-ChildItem -Recurse llama-bin -Filter "llama-server.exe" | Select-Object -First 1
           if (-not $serverExe) {
-            Write-Error "llama-server.exe not found in extracted archive!"
+            Write-Error "llama-server.exe not found!"
             exit 1
           }
           Copy-Item $serverExe.FullName "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
-          Write-Host "Found llama-server at: $($serverExe.FullName)"
+          Write-Host "llama-server: $($serverExe.FullName)"
 
-          # Copy all DLLs to src-tauri/ root (NOT binaries/ subdirectory!)
-          # Tauri places sidecar in install root, resources preserve dir structure.
-          # By putting DLLs in src-tauri/ with resources: ["*.dll"], they end up
-          # in the same directory as the sidecar exe. llama-server finds them automatically.
+          # Copy DLLs to src-tauri/ root (bundled as resources next to sidecar)
           $serverDir = $serverExe.DirectoryName
           Get-ChildItem "$serverDir/*.dll" | ForEach-Object {
             Copy-Item $_.FullName "src-tauri/"
-            Write-Host "  Bundled: $($_.Name)"
+            Write-Host "  DLL: $($_.Name)"
           }
-
-          # Copy CUDA runtime DLLs (cublas, cublasLt, cudart)
           Get-ChildItem -Recurse cudart-bin -Filter "*.dll" | ForEach-Object {
             Copy-Item $_.FullName "src-tauri/"
-            Write-Host "  Bundled (cudart): $($_.Name)"
+            Write-Host "  DLL (cudart): $($_.Name)"
           }
 
           $sizeMB = [math]::Round((Get-Item "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe").Length / 1MB)
-          Write-Host "llama-server binary: $sizeMB MB"
-          $dllCount = (Get-ChildItem "src-tauri/*.dll").Count
-          Write-Host "DLLs bundled (in src-tauri root): $dllCount"
-          Get-ChildItem "src-tauri/*.dll" | ForEach-Object { Write-Host "  $_" }
+          Write-Host "Binary: $sizeMB MB, DLLs: $((Get-ChildItem 'src-tauri/*.dll').Count)"
         shell: pwsh
 
       - name: Setup Node.js 22
@@ -76,10 +60,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install Node dependencies
+      - name: Install dependencies
         run: npm install
 
-      - name: Setup Rust toolchain
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
@@ -87,90 +71,194 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Build Tauri app
+      - name: Build Tauri (Windows MSI)
         run: npx tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-          # Override resources to bundle DLLs from src-tauri/ root (next to sidecar exe in install dir)
-          TAURI_CONFIG: '{"bundle":{"resources":["*.dll"]}}'
+          TAURI_CONFIG: '{"bundle":{"targets":["msi"],"resources":["*.dll"]}}'
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.zip
+            src-tauri/target/release/bundle/msi/*.msi.zip.sig
+
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download llama-server (macOS ARM64 Metal)
+        run: |
+          ver="b8022"
+          base="https://github.com/ggml-org/llama.cpp/releases/download/$ver"
+
+          echo "Downloading llama-server $ver (macOS ARM64)..."
+          curl -L -o llama.zip "$base/llama-$ver-bin-macos-arm64.zip"
+          unzip llama.zip -d llama-bin
+
+          echo "=== Extracted contents ==="
+          find llama-bin -type f | head -20
+
+          mkdir -p src-tauri/binaries
+
+          # Find llama-server binary
+          SERVER_BIN=$(find llama-bin -name "llama-server" -type f | head -1)
+          if [ -z "$SERVER_BIN" ]; then
+            echo "ERROR: llama-server not found!"
+            exit 1
+          fi
+          cp "$SERVER_BIN" src-tauri/binaries/llama-server-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/llama-server-aarch64-apple-darwin
+
+          SIZE_MB=$(du -m "src-tauri/binaries/llama-server-aarch64-apple-darwin" | cut -f1)
+          echo "llama-server: $SIZE_MB MB"
+
+          # Check for any .dylib files that might be needed
+          DYLIBS=$(find llama-bin -name "*.dylib" -type f 2>/dev/null)
+          if [ -n "$DYLIBS" ]; then
+            echo "Found dylibs:"
+            echo "$DYLIBS"
+            for dylib in $DYLIBS; do
+              cp "$dylib" src-tauri/
+              echo "  Bundled: $(basename $dylib)"
+            done
+          else
+            echo "No extra dylibs needed (Metal built-in)"
+          fi
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Build Tauri (macOS DMG)
+        run: npx tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          TAURI_CONFIG: '{"bundle":{"targets":["dmg"]}}'
 
       - name: List build artifacts
-        run: |
-          Get-ChildItem -Recurse "src-tauri/target/release/bundle" | Select-Object FullName
-        shell: pwsh
+        run: find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle dir"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundle
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.tar.gz
+            src-tauri/target/release/bundle/macos/*.tar.gz.sig
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for version)
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-bundle
+          path: artifacts/windows
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-bundle
+          path: artifacts/macos
+
+      - name: Debug artifact structure
+        run: find artifacts -type f -exec ls -lh {} \;
 
       - name: Generate updater latest.json
         run: |
-          $ErrorActionPreference = "Stop"
-          $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $tag = "v$version"
+          set -e
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          TAG="v$VERSION"
+          REPO="mikusnuz/plumise-agent-app"
+          BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
-          # Debug: list all bundle files
-          Write-Host "=== Bundle directory contents ==="
-          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -File | ForEach-Object {
-            Write-Host "  $($_.FullName) ($([math]::Round($_.Length / 1MB, 1)) MB)"
-          }
+          echo "Version: $VERSION, Tag: $TAG"
 
-          # Find .msi.zip and .sig (Tauri v2 updater artifacts)
-          $msiZip = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi.zip" | Select-Object -First 1
-          if (-not $msiZip) {
-            Write-Host "WARNING: No .msi.zip found, looking for .msi to create latest.json"
-            $msi = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi" | Select-Object -First 1
-            if (-not $msi) {
-              Write-Error "No MSI artifacts found!"
-              exit 1
-            }
-            # Create latest.json without updater signature (manual update only)
-            $url = "https://github.com/mikusnuz/plumise-agent-app/releases/download/$tag/$($msi.Name)"
-            $json = @{
-              version = $version
-              notes = "See release notes on GitHub"
-              pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-              platforms = @{
-                "windows-x86_64" = @{
-                  url = $url
-                }
-              }
-            } | ConvertTo-Json -Depth 4
-            $json | Out-File -FilePath "$($msi.DirectoryName)/latest.json" -Encoding utf8
-            Write-Host "Generated latest.json (no signature) for $tag"
-            Write-Host $json
-            exit 0
-          }
+          # Find Windows updater artifacts
+          WIN_ZIP=$(find artifacts/windows -name "*.msi.zip" | head -1)
+          WIN_SIG=$(find artifacts/windows -name "*.msi.zip.sig" | head -1)
 
-          $sigFile = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi.zip.sig" | Select-Object -First 1
-          if (-not $sigFile) {
-            Write-Error "Found .msi.zip but no .msi.zip.sig — check TAURI_SIGNING_PRIVATE_KEY"
-            exit 1
-          }
+          # Find macOS updater artifacts
+          MAC_TAR=$(find artifacts/macos -name "*.tar.gz" ! -name "*.sig" | head -1)
+          MAC_SIG=$(find artifacts/macos -name "*.tar.gz.sig" | head -1)
 
-          $signature = Get-Content $sigFile.FullName -Raw
-          $url = "https://github.com/mikusnuz/plumise-agent-app/releases/download/$tag/$($msiZip.Name)"
-          $json = @{
-            version = $version
-            notes = "See release notes on GitHub"
-            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = @{
-                signature = $signature.Trim()
-                url = $url
-              }
-            }
-          } | ConvertTo-Json -Depth 4
-          $json | Out-File -FilePath "$($msiZip.DirectoryName)/latest.json" -Encoding utf8
-          Write-Host "Generated latest.json for $tag"
-          Write-Host $json
-        shell: pwsh
+          echo "Windows zip: $WIN_ZIP"
+          echo "Windows sig: $WIN_SIG"
+          echo "macOS tar: $MAC_TAR"
+          echo "macOS sig: $MAC_SIG"
+
+          # Build platforms JSON
+          PLATFORMS="{}"
+
+          if [ -n "$WIN_ZIP" ] && [ -n "$WIN_SIG" ]; then
+            WIN_SIG_CONTENT=$(cat "$WIN_SIG" | tr -d '\n')
+            WIN_FILENAME=$(basename "$WIN_ZIP")
+            PLATFORMS=$(echo "$PLATFORMS" | jq \
+              --arg sig "$WIN_SIG_CONTENT" \
+              --arg url "$BASE_URL/$WIN_FILENAME" \
+              '. + {"windows-x86_64": {"signature": $sig, "url": $url}}')
+          fi
+
+          if [ -n "$MAC_TAR" ] && [ -n "$MAC_SIG" ]; then
+            MAC_SIG_CONTENT=$(cat "$MAC_SIG" | tr -d '\n')
+            MAC_FILENAME=$(basename "$MAC_TAR")
+            PLATFORMS=$(echo "$PLATFORMS" | jq \
+              --arg sig "$MAC_SIG_CONTENT" \
+              --arg url "$BASE_URL/$MAC_FILENAME" \
+              '. + {"darwin-aarch64": {"signature": $sig, "url": $url}}')
+          fi
+
+          # Build final latest.json
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$PLATFORMS" \
+            '{version: $version, notes: "See release notes on GitHub", pub_date: $pub_date, platforms: $platforms}' \
+            > artifacts/latest.json
+
+          echo "=== latest.json ==="
+          cat artifacts/latest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.msi.zip
-            src-tauri/target/release/bundle/**/*.msi.zip.sig
-            src-tauri/target/release/bundle/**/latest.json
+            artifacts/windows/**/*.msi
+            artifacts/windows/**/*.msi.zip
+            artifacts/windows/**/*.msi.zip.sig
+            artifacts/macos/**/*.dmg
+            artifacts/macos/**/*.tar.gz
+            artifacts/macos/**/*.tar.gz.sig
+            artifacts/latest.json
           draft: false
           prerelease: false
           generate_release_notes: true

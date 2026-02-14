@@ -790,22 +790,27 @@ pub async fn preflight_check(
         },
     });
 
-    // 6. GPU / CUDA driver
+    // 6. GPU detection (cross-platform)
     if config.gpu_layers > 0 {
-        let gpu_info = detect_nvidia_gpu();
+        let gpu_info = detect_gpu();
         match gpu_info {
             Some((name, vram_mb)) => {
+                let detail = if vram_mb > 0 {
+                    format!("{} ({} MB)", name, vram_mb)
+                } else {
+                    name
+                };
                 checks.push(PreflightCheck {
                     name: "GPU".to_string(),
                     passed: true,
-                    message: format!("{} ({} MB VRAM)", name, vram_mb),
+                    message: detail,
                 });
             }
             None => {
                 checks.push(PreflightCheck {
                     name: "GPU".to_string(),
                     passed: false,
-                    message: "NVIDIA driver not detected. Install GPU drivers or set GPU Layers to 0 for CPU mode.".into(),
+                    message: "No GPU detected. Install GPU drivers or set GPU Layers to 0 for CPU mode.".into(),
                 });
             }
         }
@@ -985,7 +990,46 @@ fn parse_log_level(line: &str) -> &str {
     }
 }
 
-/// Detect NVIDIA GPU via nvidia-smi. Returns (gpu_name, vram_mb) or None.
+/// Cross-platform GPU detection.
+fn detect_gpu() -> Option<(String, u64)> {
+    #[cfg(target_os = "macos")]
+    return detect_metal_gpu();
+
+    #[cfg(not(target_os = "macos"))]
+    return detect_nvidia_gpu();
+}
+
+/// Detect Metal GPU on macOS (Apple Silicon or discrete).
+#[cfg(target_os = "macos")]
+fn detect_metal_gpu() -> Option<(String, u64)> {
+    let output = std::process::Command::new("system_profiler")
+        .args(["SPDisplaysDataType"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        // Apple Silicon always has Metal — return generic info
+        return Some(("Apple GPU (Metal)".to_string(), 0));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let name = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with("Chipset Model:"))
+        .and_then(|l| l.split(':').nth(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Apple GPU".to_string());
+
+    // Apple Silicon uses unified memory — report total system RAM
+    let sys = sysinfo::System::new_all();
+    let unified_ram_mb = sys.total_memory() / (1024 * 1024);
+
+    Some((format!("{} (Metal)", name), unified_ram_mb))
+}
+
 /// Find the llama-server binary. Returns (exe_path, exe_directory).
 /// Search order:
 ///   1. Tauri resource dir / binaries/ (installed MSI)
@@ -1066,6 +1110,7 @@ fn find_llama_server(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 fn detect_nvidia_gpu() -> Option<(String, u64)> {
     let output = std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])

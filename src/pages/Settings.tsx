@@ -207,7 +207,8 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 disabled={isRunning}
               >
                 <option value="auto">Auto Detect</option>
-                <option value="cuda">CUDA (GPU)</option>
+                <option value="metal">Metal (macOS GPU)</option>
+                <option value="cuda">CUDA (NVIDIA GPU)</option>
                 <option value="cpu">CPU Only</option>
               </select>
             </div>

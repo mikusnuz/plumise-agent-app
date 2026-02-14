@@ -25,20 +25,25 @@ fn get_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 pub async fn save_config(config: AgentConfig, app: tauri::AppHandle) -> Result<(), String> {
     let path = get_config_path(&app)?;
 
-    // Save private_key to OS keyring
+    // Try to save private_key to OS keyring (best-effort, may fail on macOS with ad-hoc signing)
     if !config.private_key.is_empty() {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-        entry.set_password(&config.private_key)
-            .map_err(|e| format!("Failed to save private key to keyring: {}", e))?;
-        log::info!("Private key saved to OS keyring");
+        match Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+            Ok(entry) => {
+                if let Err(e) = entry.set_password(&config.private_key) {
+                    log::warn!("Keyring save failed (non-fatal): {}", e);
+                } else {
+                    log::info!("Private key saved to OS keyring");
+                }
+            }
+            Err(e) => {
+                log::warn!("Keyring not available (non-fatal): {}", e);
+            }
+        }
     }
 
-    // Create a config copy without private_key for JSON storage
-    let mut config_to_save = config.clone();
-    config_to_save.private_key = String::new();
-
-    let json = serde_json::to_string_pretty(&config_to_save)
+    // Always save full config including private_key to JSON
+    // (JSON is in app_data_dir which is user-private)
+    let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     std::fs::write(&path, json)
@@ -92,38 +97,33 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
         config.model_file = "gpt-oss-20b-mxfp4.gguf".to_string();
     }
 
-    // Migration: if JSON has private_key, move it to keyring and remove from JSON
-    if !config.private_key.is_empty() {
-        log::info!("Migrating private key from JSON to keyring");
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-        entry.set_password(&config.private_key)
-            .map_err(|e| format!("Failed to migrate private key to keyring: {}", e))?;
+    // Private key loading: try keyring first (more secure), fall back to JSON value.
+    // JSON now always stores the key as backup for platforms where keyring is unreliable.
+    let json_private_key = config.private_key.clone();
 
-        // Clear from config and save back to JSON
-        config.private_key = String::new();
-        let json = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to update config file: {}", e))?;
-        log::info!("Private key migrated to keyring, removed from JSON");
-    }
-
-    // Load private_key from keyring
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-
-    match entry.get_password() {
-        Ok(pk) => {
-            config.private_key = pk;
-            log::info!("Private key loaded from OS keyring");
-        }
-        Err(keyring::Error::NoEntry) => {
-            // No private key in keyring (new user or not set yet)
-            log::info!("No private key found in keyring");
-        }
+    match Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        Ok(entry) => match entry.get_password() {
+            Ok(pk) if !pk.is_empty() => {
+                config.private_key = pk;
+                log::info!("Private key loaded from OS keyring");
+            }
+            _ => {
+                // Keyring empty or error — keep JSON value
+                if !json_private_key.is_empty() {
+                    config.private_key = json_private_key;
+                    log::info!("Private key loaded from config JSON (keyring fallback)");
+                } else {
+                    log::info!("No private key found");
+                }
+            }
+        },
         Err(e) => {
-            log::warn!("Failed to read private key from keyring: {}", e);
+            log::warn!("Keyring not available: {}", e);
+            // Keep JSON value as fallback
+            if !json_private_key.is_empty() {
+                config.private_key = json_private_key;
+                log::info!("Private key loaded from config JSON (keyring unavailable)");
+            }
         }
     }
 

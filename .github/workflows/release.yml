@@ -78,14 +78,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           TAURI_CONFIG: '{"bundle":{"targets":["msi"],"resources":["*.dll"]}}'
 
+      - name: Collect Windows artifacts
+        run: |
+          Write-Host "=== Bundle directory ==="
+          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -File | ForEach-Object {
+            Write-Host "  $($_.FullName) ($([math]::Round($_.Length / 1MB, 1)) MB)"
+          }
+
+          New-Item -Path "artifacts" -ItemType Directory -Force
+          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi" | Copy-Item -Destination "artifacts/"
+          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi.zip" | Copy-Item -Destination "artifacts/"
+          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter "*.msi.zip.sig" | Copy-Item -Destination "artifacts/"
+
+          Write-Host "=== Collected artifacts ==="
+          Get-ChildItem "artifacts" | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
+        shell: pwsh
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-bundle
-          path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/msi/*.msi.zip
-            src-tauri/target/release/bundle/msi/*.msi.zip.sig
+          path: artifacts/*
 
   build-macos:
     runs-on: macos-14
@@ -159,17 +172,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           TAURI_CONFIG: '{"bundle":{"targets":["dmg"]}}'
 
-      - name: List build artifacts
-        run: find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle dir"
+      - name: Collect macOS artifacts
+        run: |
+          echo "=== Bundle directory ==="
+          find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle dir found"
+
+          mkdir -p artifacts
+          # Copy DMG
+          find src-tauri/target/release/bundle -name "*.dmg" -exec cp {} artifacts/ \;
+          # Copy updater archives and signatures
+          find src-tauri/target/release/bundle -name "*.tar.gz" -exec cp {} artifacts/ \;
+          find src-tauri/target/release/bundle -name "*.tar.gz.sig" -exec cp {} artifacts/ \;
+
+          echo "=== Collected artifacts ==="
+          ls -lh artifacts/
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-bundle
-          path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.tar.gz
-            src-tauri/target/release/bundle/macos/*.tar.gz.sig
+          path: artifacts/*
 
   release:
     needs: [build-windows, build-macos]
@@ -253,12 +275,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/windows/**/*.msi
-            artifacts/windows/**/*.msi.zip
-            artifacts/windows/**/*.msi.zip.sig
-            artifacts/macos/**/*.dmg
-            artifacts/macos/**/*.tar.gz
-            artifacts/macos/**/*.tar.gz.sig
+            artifacts/windows/*
+            artifacts/macos/*
             artifacts/latest.json
           draft: false
           prerelease: false

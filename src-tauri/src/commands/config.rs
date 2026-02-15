@@ -98,6 +98,16 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
         config.model_file = "gpt-oss-20b-mxfp4.gguf".to_string();
     }
 
+    // Migration: node-1.plumise.com → plug.plumise.com
+    if config.oracle_url.contains("node-1.plumise.com") {
+        log::info!("Migrating oracle_url from node-1 to plug.plumise.com");
+        config.oracle_url = "https://plug.plumise.com/oracle".to_string();
+    }
+    if config.chain_rpc.contains("node-1.plumise.com") {
+        log::info!("Migrating chain_rpc from node-1 to plug.plumise.com");
+        config.chain_rpc = "https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0".to_string();
+    }
+
     // Private key loading: try keyring first (more secure), fall back to JSON value.
     // JSON now always stores the key as backup for platforms where keyring is unreliable.
     let json_private_key = config.private_key.clone();

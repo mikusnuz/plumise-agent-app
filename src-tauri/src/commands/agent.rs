@@ -182,7 +182,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     }
 
     // Build llama-server arguments
-    let args: Vec<String> = vec![
+    let mut args: Vec<String> = vec![
         "-m".into(),
         model_path.to_string_lossy().to_string(),
         "--host".into(),
@@ -197,6 +197,25 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         config.parallel_slots.to_string(),
         "--jinja".into(),
     ];
+
+    // Override GGUF's embedded chat template with our custom one (fixes model identity)
+    let template_candidates = {
+        let mut paths = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            paths.push(resource_dir.join("resources").join("chat-template.jinja"));
+            paths.push(resource_dir.join("chat-template.jinja"));
+        }
+        // Dev mode: check src-tauri/resources/ relative to manifest dir
+        paths.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("chat-template.jinja"));
+        paths
+    };
+    if let Some(template_path) = template_candidates.iter().find(|p| p.exists()) {
+        log::info!("Using custom chat template: {}", template_path.display());
+        args.push("--chat-template-file".into());
+        args.push(template_path.to_string_lossy().to_string());
+    } else {
+        log::warn!("Custom chat template not found, using GGUF default");
+    }
 
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 

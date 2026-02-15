@@ -69,7 +69,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             http_port: 18920,
             gpu_layers: 99,
             ctx_size: 8192,
-            parallel_slots: 4,
+            parallel_slots: 1,
             ram_limit_gb: 0,
         });
     }
@@ -96,6 +96,12 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     if config.model_file == "gpt-oss-20b-MXFP4.gguf" {
         log::info!("Migrating model_file case: MXFP4 -> mxfp4");
         config.model_file = "gpt-oss-20b-mxfp4.gguf".to_string();
+    }
+
+    // Migration: parallelSlots 4 was old default, too high for 8192 ctx (only 2048/slot)
+    if config.parallel_slots == 4 && config.ctx_size <= 8192 {
+        log::info!("Migrating parallel_slots from 4 to 1 (was causing context overflow)");
+        config.parallel_slots = 1;
     }
 
     // Migration: node-1.plumise.com → plug.plumise.com

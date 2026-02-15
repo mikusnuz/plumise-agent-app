@@ -43,7 +43,7 @@ fn default_ctx_size() -> u32 {
     8192
 }
 fn default_parallel_slots() -> u32 {
-    4
+    1
 }
 fn default_ram_limit_gb() -> u32 {
     0 // 0 = auto (no limit)
@@ -179,6 +179,26 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
+    // Auto-adjust parallel_slots to ensure each slot gets at least 4096 tokens
+    let mut effective_slots = config.parallel_slots;
+    if effective_slots > 1 {
+        let per_slot = config.ctx_size / effective_slots;
+        if per_slot < 4096 {
+            effective_slots = (config.ctx_size / 4096).max(1);
+            log::warn!(
+                "Reduced parallel_slots from {} to {} (per-slot context {} < 4096)",
+                config.parallel_slots, effective_slots, per_slot,
+            );
+            let _ = app.emit("agent-log", LogEvent {
+                level: "WARNING".to_string(),
+                message: format!(
+                    "Auto-adjusted parallel slots: {} → {} (need ≥4096 tokens per slot, ctx={})",
+                    config.parallel_slots, effective_slots, config.ctx_size,
+                ),
+            });
+        }
+    }
+
     // Build llama-server arguments
     let mut args: Vec<String> = vec![
         "-m".into(),
@@ -192,7 +212,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
         "--ctx-size".into(),
         config.ctx_size.to_string(),
         "-np".into(),
-        config.parallel_slots.to_string(),
+        effective_slots.to_string(),
         "--jinja".into(),
     ];
 

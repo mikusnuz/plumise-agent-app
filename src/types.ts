@@ -64,6 +64,6 @@ export const DEFAULT_CONFIG: AgentConfig = {
   httpPort: 18920,
   gpuLayers: 99,
   ctxSize: 8192,
-  parallelSlots: 4,
+  parallelSlots: 1,
   ramLimitGb: 0,
 };

@@ -30,7 +30,7 @@ pub struct AgentConfig {
     pub parallel_slots: u32,
     #[serde(default = "default_ram_limit_gb")]
     pub ram_limit_gb: u32,
-    #[serde(default)]
+    #[serde(default = "default_inference_api_url")]
     pub inference_api_url: String,
 }
 
@@ -48,6 +48,9 @@ fn default_parallel_slots() -> u32 {
 }
 fn default_ram_limit_gb() -> u32 {
     0 // 0 = auto (no limit)
+}
+fn default_inference_api_url() -> String {
+    "https://node-1.plumise.com/api".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

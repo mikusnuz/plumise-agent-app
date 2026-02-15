@@ -667,7 +667,7 @@ async fn on_agent_ready(
         Ok(()) => {
             let _ = app.emit("agent-log", LogEvent {
                 level: "INFO".to_string(),
-                message: "Registered with Oracle (on-chain + pipeline)".to_string(),
+                message: "Registered with Oracle as standalone node".to_string(),
             });
         }
         Err(e) => {
@@ -679,20 +679,7 @@ async fn on_agent_ready(
         }
     }
 
-    // 2. Report ready
-    if let Err(e) =
-        oracle::registry::report_ready(client, &config.oracle_url, &signing_key, oracle_model)
-            .await
-    {
-        log::warn!("Oracle ready report failed: {}", e);
-    } else {
-        let _ = app.emit("agent-log", LogEvent {
-            level: "INFO".to_string(),
-            message: "Agent marked as ready".to_string(),
-        });
-    }
-
-    // 3. Spawn background tasks (metrics reporter + periodic re-registration)
+    // 2. Spawn background tasks (metrics reporter + periodic re-registration)
     let reporter_handle = crate::oracle::reporter::start_reporter(
         client.clone(),
         config.oracle_url.clone(),

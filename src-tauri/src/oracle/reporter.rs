@@ -16,12 +16,9 @@ pub struct RegistrationParams {
 
 /// Start a background metrics reporter task (60s interval).
 ///
-/// - Reports metrics every 60s to keep the pipeline assignment alive
-///   (Oracle deletes assignments not updated for 10 min).
-/// - Even when llama-server metrics fetch fails, sends zeroed metrics
-///   as a keepalive to prevent premature pipeline removal.
-/// - Re-registers + reports ready every 5 minutes to recover from
-///   assignment deletion (e.g. after network interruptions).
+/// - Reports metrics every 60s as keepalive for Oracle node tracking.
+/// - Re-registers every 5 minutes at /api/nodes/register (standalone node,
+///   NOT /api/v1/pipeline/register — agent-app is not a gRPC pipeline participant).
 pub fn start_reporter(
     client: reqwest::Client,
     oracle_url: String,
@@ -40,9 +37,8 @@ pub fn start_reporter(
             interval.tick().await;
             tick_count += 1;
 
-            // Every 5 minutes (every 5th tick), re-register + report ready
-            // to recover pipeline assignment if it was deleted due to stale timeout.
-            // Must also report_ready() because register() sets ready=false.
+            // Every 5 minutes (every 5th tick), re-register as standalone node
+            // to keep node entry alive in Oracle (no pipeline ready needed).
             if tick_count % 5 == 0 {
                 match crate::oracle::registry::register(
                     &client,
@@ -59,17 +55,6 @@ pub fn start_reporter(
                 {
                     Ok(()) => {
                         log::debug!("Periodic re-registration successful");
-                        // Re-register sets ready=false, so report ready again
-                        if let Err(e) = crate::oracle::registry::report_ready(
-                            &client,
-                            &oracle_url,
-                            &signing_key,
-                            &registration.model,
-                        )
-                        .await
-                        {
-                            log::warn!("Periodic ready report failed: {}", e);
-                        }
                     }
                     Err(e) => {
                         log::warn!("Periodic re-registration failed: {}", e);

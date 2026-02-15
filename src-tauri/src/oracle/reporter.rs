@@ -3,21 +3,59 @@ use serde::Serialize;
 use crate::chain::crypto::{address_from_key, personal_sign};
 use crate::inference::metrics::InferenceMetrics;
 
+/// Registration parameters needed for periodic re-registration
+#[derive(Clone)]
+pub struct RegistrationParams {
+    pub model: String,
+    pub http_port: u16,
+    pub ram_mb: u64,
+    pub vram_mb: u64,
+    pub device: String,
+    pub external_ip: String,
+}
+
 /// Start a background metrics reporter task (60s interval)
-/// Returns a JoinHandle that can be aborted on stop
+/// Also re-registers with the Oracle every 5 minutes to recover from
+/// pipeline assignment expiry (e.g. after network interruptions).
 pub fn start_reporter(
     client: reqwest::Client,
     oracle_url: String,
     signing_key: SigningKey,
     llama_port: u16,
+    registration: RegistrationParams,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         // Skip the first immediate tick
         interval.tick().await;
 
+        let mut tick_count = 0u64;
+
         loop {
             interval.tick().await;
+            tick_count += 1;
+
+            // Every 5 minutes (every 5th tick), re-register with Oracle
+            // to recover pipeline assignment if it was deleted due to stale timeout
+            if tick_count % 5 == 0 {
+                if let Err(e) = crate::oracle::registry::register(
+                    &client,
+                    &oracle_url,
+                    &signing_key,
+                    &registration.model,
+                    registration.http_port,
+                    registration.ram_mb,
+                    registration.vram_mb,
+                    &registration.device,
+                    &registration.external_ip,
+                )
+                .await
+                {
+                    log::warn!("Periodic re-registration failed: {}", e);
+                } else {
+                    log::debug!("Periodic re-registration successful");
+                }
+            }
 
             let metrics = match crate::inference::metrics::fetch_metrics(&client, llama_port).await
             {

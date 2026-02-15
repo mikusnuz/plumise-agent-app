@@ -691,12 +691,20 @@ async fn on_agent_ready(
         });
     }
 
-    // 3. Spawn background tasks (metrics reporter only — heartbeats handled by Oracle)
+    // 3. Spawn background tasks (metrics reporter + periodic re-registration)
     let reporter_handle = crate::oracle::reporter::start_reporter(
         client.clone(),
         config.oracle_url.clone(),
         signing_key.clone(),
         config.http_port,
+        crate::oracle::reporter::RegistrationParams {
+            model: oracle_model.to_string(),
+            http_port: config.http_port,
+            ram_mb,
+            vram_mb: 0,
+            device: config.device.clone(),
+            external_ip: local_ip.clone(),
+        },
     );
 
     let mut guard = state.lock().await;

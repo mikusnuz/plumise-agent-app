@@ -30,8 +30,7 @@ pub struct AgentConfig {
     pub parallel_slots: u32,
     #[serde(default = "default_ram_limit_gb")]
     pub ram_limit_gb: u32,
-    #[serde(default = "default_inference_api_url")]
-    pub inference_api_url: String,
+    // inference_api_url is auto-derived from oracle_url, no config needed
 }
 
 fn default_model_file() -> String {
@@ -49,10 +48,6 @@ fn default_parallel_slots() -> u32 {
 fn default_ram_limit_gb() -> u32 {
     0 // 0 = auto (no limit)
 }
-fn default_inference_api_url() -> String {
-    "https://node-1.plumise.com/api".to_string()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStatus {
@@ -701,28 +696,31 @@ async fn on_agent_ready(
     let mut guard = state.lock().await;
     guard.background_tasks.push(reporter_handle);
 
-    // 4. Start WebSocket relay to Inference API (if configured)
-    if !config.inference_api_url.is_empty() {
-        let relay_url = config
-            .inference_api_url
-            .replace("https://", "wss://")
-            .replace("http://", "ws://");
-        let relay_url = relay_url.trim_end_matches('/');
-        let ws_url = format!("{}/ws/agent-relay", relay_url);
+    // 4. Start WebSocket relay — auto-derive from oracle URL
+    //    e.g. https://node-1.plumise.com/oracle → wss://node-1.plumise.com/api/ws/agent-relay
+    let relay_base = config.oracle_url.trim_end_matches('/');
+    let relay_base = if relay_base.ends_with("/oracle") {
+        relay_base.trim_end_matches("/oracle")
+    } else {
+        relay_base
+    };
+    let ws_base = relay_base
+        .replace("https://", "wss://")
+        .replace("http://", "ws://");
+    let ws_url = format!("{}/api/ws/agent-relay", ws_base);
 
-        let _ = app.emit("agent-log", LogEvent {
-            level: "INFO".to_string(),
-            message: format!("Starting relay connection to {}", ws_url),
-        });
+    let _ = app.emit("agent-log", LogEvent {
+        level: "INFO".to_string(),
+        message: format!("Connecting to inference relay: {}", ws_url),
+    });
 
-        let relay_handle = crate::relay::client::start_relay(
-            ws_url,
-            signing_key.clone(),
-            oracle_model.to_string(),
-            config.http_port,
-        );
-        guard.background_tasks.push(relay_handle);
-    }
+    let relay_handle = crate::relay::client::start_relay(
+        ws_url,
+        signing_key.clone(),
+        oracle_model.to_string(),
+        config.http_port,
+    );
+    guard.background_tasks.push(relay_handle);
 }
 
 // ---- Pre-flight Check ----

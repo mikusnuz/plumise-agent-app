@@ -45,7 +45,6 @@ export interface AgentConfig {
   ctxSize: number;
   parallelSlots: number;
   ramLimitGb: number;
-  inferenceApiUrl: string;
 }
 
 export interface LogEntry {
@@ -67,5 +66,4 @@ export const DEFAULT_CONFIG: AgentConfig = {
   ctxSize: 8192,
   parallelSlots: 4,
   ramLimitGb: 0,
-  inferenceApiUrl: 'https://node-1.plumise.com/api',
 };

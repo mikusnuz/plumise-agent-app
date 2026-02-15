@@ -303,32 +303,17 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
 
           {showAdvanced && (
             <div className="space-y-4 pt-2">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                    Oracle URL
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field text-xs"
-                    value={config.oracleUrl}
-                    onChange={(e) => update('oracleUrl', e.target.value)}
-                    disabled={isRunning}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                    Chain RPC
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field text-xs"
-                    value={config.chainRpc}
-                    onChange={(e) => update('chainRpc', e.target.value)}
-                    disabled={isRunning}
-                  />
-                </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                  Oracle URL
+                </label>
+                <input
+                  type="text"
+                  className="input-field text-xs"
+                  value={config.oracleUrl}
+                  onChange={(e) => update('oracleUrl', e.target.value)}
+                  disabled={isRunning}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">

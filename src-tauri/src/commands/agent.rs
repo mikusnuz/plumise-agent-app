@@ -697,7 +697,7 @@ async fn on_agent_ready(
     guard.background_tasks.push(reporter_handle);
 
     // 4. Start WebSocket relay — auto-derive from oracle URL
-    //    e.g. https://node-1.plumise.com/oracle → wss://node-1.plumise.com/api/ws/agent-relay
+    //    e.g. https://plug.plumise.com/oracle → wss://plug.plumise.com/ws/agent-relay
     let relay_base = config.oracle_url.trim_end_matches('/');
     let relay_base = if relay_base.ends_with("/oracle") {
         relay_base.trim_end_matches("/oracle")
@@ -707,7 +707,7 @@ async fn on_agent_ready(
     let ws_base = relay_base
         .replace("https://", "wss://")
         .replace("http://", "ws://");
-    let ws_url = format!("{}/api/ws/agent-relay", ws_base);
+    let ws_url = format!("{}/ws/agent-relay", ws_base);
 
     let _ = app.emit("agent-log", LogEvent {
         level: "INFO".to_string(),

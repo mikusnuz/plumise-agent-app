@@ -64,14 +64,13 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             model: "ggml-org/gpt-oss-20b-GGUF".to_string(),
             model_file: "gpt-oss-20b-mxfp4.gguf".to_string(),
             device: "auto".to_string(),
-            oracle_url: "https://node-1.plumise.com/oracle".to_string(),
-            chain_rpc: "https://node-1.plumise.com/rpc".to_string(),
+            oracle_url: "https://plug.plumise.com/oracle".to_string(),
+            chain_rpc: "https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0".to_string(),
             http_port: 18920,
             gpu_layers: 99,
             ctx_size: 8192,
             parallel_slots: 4,
             ram_limit_gb: 0,
-            inference_api_url: "https://node-1.plumise.com/api".to_string(),
         });
     }
 

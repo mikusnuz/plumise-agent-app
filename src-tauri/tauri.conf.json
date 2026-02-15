@@ -38,7 +38,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/llama-server"],
-    "resources": ["resources/chat-template.jinja"],
+    "resources": [],
     "windows": {}
   },
   "plugins": {

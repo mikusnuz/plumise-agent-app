@@ -14,9 +14,14 @@ pub struct RegistrationParams {
     pub external_ip: String,
 }
 
-/// Start a background metrics reporter task (60s interval)
-/// Also re-registers with the Oracle every 5 minutes to recover from
-/// pipeline assignment expiry (e.g. after network interruptions).
+/// Start a background metrics reporter task (60s interval).
+///
+/// - Reports metrics every 60s to keep the pipeline assignment alive
+///   (Oracle deletes assignments not updated for 10 min).
+/// - Even when llama-server metrics fetch fails, sends zeroed metrics
+///   as a keepalive to prevent premature pipeline removal.
+/// - Re-registers + reports ready every 5 minutes to recover from
+///   assignment deletion (e.g. after network interruptions).
 pub fn start_reporter(
     client: reqwest::Client,
     oracle_url: String,
@@ -35,10 +40,11 @@ pub fn start_reporter(
             interval.tick().await;
             tick_count += 1;
 
-            // Every 5 minutes (every 5th tick), re-register with Oracle
-            // to recover pipeline assignment if it was deleted due to stale timeout
+            // Every 5 minutes (every 5th tick), re-register + report ready
+            // to recover pipeline assignment if it was deleted due to stale timeout.
+            // Must also report_ready() because register() sets ready=false.
             if tick_count % 5 == 0 {
-                if let Err(e) = crate::oracle::registry::register(
+                match crate::oracle::registry::register(
                     &client,
                     &oracle_url,
                     &signing_key,
@@ -51,18 +57,35 @@ pub fn start_reporter(
                 )
                 .await
                 {
-                    log::warn!("Periodic re-registration failed: {}", e);
-                } else {
-                    log::debug!("Periodic re-registration successful");
+                    Ok(()) => {
+                        log::debug!("Periodic re-registration successful");
+                        // Re-register sets ready=false, so report ready again
+                        if let Err(e) = crate::oracle::registry::report_ready(
+                            &client,
+                            &oracle_url,
+                            &signing_key,
+                            &registration.model,
+                        )
+                        .await
+                        {
+                            log::warn!("Periodic ready report failed: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Periodic re-registration failed: {}", e);
+                    }
                 }
             }
 
+            // Fetch metrics from local llama-server, fall back to zeroed metrics.
+            // Even zeroed metrics keep the pipeline_assignments.updatedAt fresh,
+            // preventing the Oracle's stale node cleanup from removing us.
             let metrics = match crate::inference::metrics::fetch_metrics(&client, llama_port).await
             {
                 Ok(m) => m,
                 Err(e) => {
-                    log::warn!("Failed to fetch metrics: {}", e);
-                    continue;
+                    log::warn!("Failed to fetch metrics, sending keepalive: {}", e);
+                    InferenceMetrics::default()
                 }
             };
 

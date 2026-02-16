@@ -232,19 +232,19 @@ export function useAgentProcess() {
   }, [status, addLog, stopPolling]);
 
   useEffect(() => {
-    let unlistenLog: (() => void) | null = null;
-    let unlistenStatus: (() => void) | null = null;
-    let unlistenProgress: (() => void) | null = null;
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
 
     // Set up Tauri event listeners
     getListen().then((listen) => {
-      if (!listen) return;
+      if (!listen || cancelled) return;
 
       listen('agent-log', (event: any) => {
         const { level, message } = event.payload;
         addLog(level, message);
       }).then((unlisten: () => void) => {
-        unlistenLog = unlisten;
+        if (cancelled) { unlisten(); return; }
+        unlisteners.push(unlisten);
       });
 
       listen('agent-status', (event: any) => {
@@ -254,22 +254,23 @@ export function useAgentProcess() {
           : newStatus;
         setStatus(mapped);
       }).then((unlisten: () => void) => {
-        unlistenStatus = unlisten;
+        if (cancelled) { unlisten(); return; }
+        unlisteners.push(unlisten);
       });
 
       listen('agent-loading-progress', (event: any) => {
         const { percent, phase, downloadedBytes, totalBytes } = event.payload;
         setLoadingProgress({ percent, phase, downloadedBytes, totalBytes });
       }).then((unlisten: () => void) => {
-        unlistenProgress = unlisten;
+        if (cancelled) { unlisten(); return; }
+        unlisteners.push(unlisten);
       });
     });
 
     return () => {
+      cancelled = true;
       stopPolling();
-      if (unlistenLog) unlistenLog();
-      if (unlistenStatus) unlistenStatus();
-      if (unlistenProgress) unlistenProgress();
+      unlisteners.forEach((fn) => fn());
     };
   }, [stopPolling, addLog]);
 

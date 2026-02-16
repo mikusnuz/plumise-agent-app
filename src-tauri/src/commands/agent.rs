@@ -6,58 +6,10 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
-use crate::chain;
-use crate::oracle;
-
-// ---- Types ----
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentConfig {
-    pub private_key: String,
-    pub model: String,
-    #[serde(default = "default_model_file")]
-    pub model_file: String,
-    pub device: String,
-    pub oracle_url: String,
-    pub chain_rpc: String,
-    pub http_port: u16,
-    #[serde(default = "default_gpu_layers")]
-    pub gpu_layers: i32,
-    #[serde(default = "default_ctx_size")]
-    pub ctx_size: u32,
-    #[serde(default = "default_parallel_slots")]
-    pub parallel_slots: u32,
-    #[serde(default = "default_ram_limit_gb")]
-    pub ram_limit_gb: u32,
-    #[serde(default = "default_distributed_mode")]
-    pub distributed_mode: String, // "auto" | "standalone" | "disabled"
-    #[serde(default = "default_rpc_port")]
-    pub rpc_port: u16,
-    // inference_api_url is auto-derived from oracle_url, no config needed
-}
-
-fn default_model_file() -> String {
-    "gpt-oss-20b-mxfp4.gguf".to_string()
-}
-fn default_gpu_layers() -> i32 {
-    99
-}
-fn default_ctx_size() -> u32 {
-    32768
-}
-fn default_parallel_slots() -> u32 {
-    1
-}
-fn default_ram_limit_gb() -> u32 {
-    0 // 0 = auto (no limit)
-}
-fn default_distributed_mode() -> String {
-    "auto".to_string()
-}
-fn default_rpc_port() -> u16 {
-    50052
-}
+use plumise_agent_core::chain;
+use plumise_agent_core::config::AgentConfig;
+use plumise_agent_core::oracle;
+use plumise_agent_core::system;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -205,7 +157,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
     };
 
     // Kill any leftover llama-server on our port (e.g. from force-quit)
-    if let Some(killed) = kill_process_on_port(config.http_port) {
+    if let Some(killed) = system::kill_process_on_port(config.http_port) {
         log::info!("Killed leftover process on port {}: {}", config.http_port, killed);
         let _ = app.emit("agent-log", LogEvent {
             level: "WARNING".to_string(),
@@ -437,7 +389,7 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                         });
                         let _ = app_exit.emit("agent-log", LogEvent {
                             level: "ERROR".to_string(),
-                            message: describe_exit_code(exit_status.code()),
+                            message: system::describe_exit_code(exit_status.code()),
                         });
                     }
                 }
@@ -489,7 +441,7 @@ async fn handle_sidecar_events(
                     });
                     let _ = app.emit("agent-log", LogEvent {
                         level: "ERROR".to_string(),
-                        message: describe_exit_code(payload.code),
+                        message: system::describe_exit_code(payload.code),
                     });
                 }
                 break;
@@ -525,7 +477,7 @@ pub async fn stop_agent(app: AppHandle) -> Result<(), String> {
     {
         let mut guard = state.lock().await;
         if let Some(pid) = guard.pid.take() {
-            kill_pid(pid);
+            system::kill_pid(pid);
         }
         // Also kill rpc-server if running
         if let Some(rpc_pid) = guard.rpc_server_pid.take() {
@@ -588,7 +540,7 @@ pub async fn get_agent_metrics(
     }
 
     let client = reqwest::Client::new();
-    let metrics = crate::inference::metrics::fetch_metrics(&client, http_port)
+    let metrics = plumise_agent_core::inference::metrics::fetch_metrics(&client, http_port)
         .await
         .unwrap_or_default();
 
@@ -717,7 +669,7 @@ async fn on_agent_ready(
     // Agent wallet does not need PLM balance.
 
     // Detect LAN IP for external access (Oracle/inference API need to reach us)
-    let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let local_ip = system::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
     log::info!("Detected local IP: {}", local_ip);
     let _ = app.emit("agent-log", LogEvent {
         level: "INFO".to_string(),
@@ -737,7 +689,7 @@ async fn on_agent_ready(
     };
 
     // Run benchmark
-    let benchmark_tok_per_sec = match crate::inference::benchmark::run_benchmark(client, config.http_port).await {
+    let benchmark_tok_per_sec = match plumise_agent_core::inference::benchmark::run_benchmark(client, config.http_port).await {
         Ok(tps) => {
             log::info!("Benchmark result: {:.2} tok/s", tps);
             let _ = app.emit("agent-log", format!("Benchmark: {:.2} tok/s", tps));
@@ -795,7 +747,7 @@ async fn on_agent_ready(
                     {
                         let mut guard = state.lock().await;
                         if let Some(pid) = guard.pid.take() {
-                            kill_pid(pid);
+                            system::kill_pid(pid);
                         }
                     }
 
@@ -870,12 +822,12 @@ async fn on_agent_ready(
     }
 
     // 2. Spawn background tasks (metrics reporter + periodic re-registration)
-    let reporter_handle = crate::oracle::reporter::start_reporter(
+    let reporter_handle = plumise_agent_core::oracle::reporter::start_reporter(
         client.clone(),
         config.oracle_url.clone(),
         signing_key.clone(),
         config.http_port,
-        crate::oracle::reporter::RegistrationParams {
+        plumise_agent_core::oracle::reporter::RegistrationParams {
             model: oracle_model.to_string(),
             http_port: config.http_port,
             ram_mb,
@@ -909,7 +861,7 @@ async fn on_agent_ready(
             message: format!("Connecting to inference relay: {}", ws_url),
         });
 
-        let relay_handle = crate::relay::client::start_relay(
+        let relay_handle = plumise_agent_core::relay::client::start_relay(
             ws_url,
             signing_key.clone(),
             oracle_model.to_string(),
@@ -930,7 +882,7 @@ async fn restart_as_coordinator(
     {
         let mut guard = state.lock().await;
         if let Some(pid) = guard.pid.take() {
-            kill_pid(pid);
+            system::kill_pid(pid);
         }
         guard.status = AgentStatus::Starting;
     }
@@ -1138,7 +1090,7 @@ pub async fn preflight_check(
 
     // 4. Wallet balance
     if pk_valid {
-        match check_wallet_balance(&client, &config.chain_rpc, &config.private_key).await {
+        match system::check_wallet_balance(&client, &config.chain_rpc, &config.private_key).await {
             Ok((balance, addr)) => {
                 let is_zero = balance == "0.0000"
                     || balance
@@ -1172,7 +1124,7 @@ pub async fn preflight_check(
         format!("Port {} available", config.http_port)
     } else {
         // Try to kill leftover process (likely a previous llama-server)
-        if let Some(killed) = kill_process_on_port(config.http_port) {
+        if let Some(killed) = system::kill_process_on_port(config.http_port) {
             // Brief wait for OS to release the port
             std::thread::sleep(std::time::Duration::from_millis(500));
             port_free =
@@ -1194,7 +1146,7 @@ pub async fn preflight_check(
 
     // 6. GPU detection (cross-platform)
     if config.gpu_layers > 0 {
-        let gpu_info = detect_gpu();
+        let gpu_info = system::detect_gpu();
         match gpu_info {
             Some((name, vram_mb)) => {
                 let detail = if vram_mb > 0 {
@@ -1274,8 +1226,8 @@ fn handle_log_line(line: &str, app: &AppHandle, last_progress_pct: &mut i32) {
         }
         return;
     }
-    let level = parse_log_level(line);
-    let masked = mask_sensitive_data(line);
+    let level = system::parse_log_level(line);
+    let masked = system::mask_sensitive_data(line);
     let _ = app.emit("agent-log", LogEvent {
         level: level.to_string(),
         message: masked,
@@ -1319,117 +1271,6 @@ fn parse_loading_progress(line: &str) -> Option<LoadingProgressEvent> {
         }
     }
     None
-}
-
-fn wei_to_display(wei_str: &str) -> String {
-    let padded = format!("{:0>19}", wei_str);
-    let split_pos = padded.len() - 18;
-    let integer_part = &padded[..split_pos];
-    let decimal_part = &padded[split_pos..];
-    let trimmed = decimal_part.trim_end_matches('0');
-    let decimal_display = if trimmed.len() < 4 {
-        &decimal_part[..4]
-    } else {
-        trimmed
-    };
-    format!("{}.{}", integer_part, decimal_display)
-}
-
-async fn check_wallet_balance(
-    client: &reqwest::Client,
-    rpc_url: &str,
-    private_key: &str,
-) -> Result<(String, String), String> {
-    let signing_key = chain::crypto::parse_private_key(private_key)?;
-    let address = chain::crypto::address_from_key(&signing_key);
-
-    let resp = client
-        .post(rpc_url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "eth_getBalance",
-            "params": [&address, "latest"],
-            "id": 1
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("RPC failed: {}", e))?;
-
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
-    let balance_hex = json["result"].as_str().ok_or("No balance")?;
-    let balance_hex = balance_hex.strip_prefix("0x").unwrap_or(balance_hex);
-    let balance_wei =
-        u128::from_str_radix(balance_hex, 16).map_err(|e| format!("Invalid balance: {}", e))?;
-    Ok((wei_to_display(&balance_wei.to_string()), address))
-}
-
-fn kill_pid(pid: u32) {
-    log::info!("Killing process PID: {}", pid);
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/F", "/PID", &pid.to_string()]);
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-        let _ = cmd.output();
-    }
-}
-
-fn parse_log_level(line: &str) -> &str {
-    let upper = line.to_uppercase();
-    if upper.contains("ERROR") || upper.contains("CRITICAL") || upper.contains("FATAL") {
-        "ERROR"
-    } else if upper.contains("WARNING") || upper.contains("WARN") {
-        "WARNING"
-    } else if upper.contains("DEBUG") || upper.contains("TRACE") {
-        "DEBUG"
-    } else {
-        "INFO"
-    }
-}
-
-/// Cross-platform GPU detection.
-fn detect_gpu() -> Option<(String, u64)> {
-    #[cfg(target_os = "macos")]
-    return detect_metal_gpu();
-
-    #[cfg(not(target_os = "macos"))]
-    return detect_nvidia_gpu();
-}
-
-/// Detect Metal GPU on macOS (Apple Silicon or discrete).
-#[cfg(target_os = "macos")]
-fn detect_metal_gpu() -> Option<(String, u64)> {
-    let output = std::process::Command::new("system_profiler")
-        .args(["SPDisplaysDataType"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        // Apple Silicon always has Metal — return generic info
-        return Some(("Apple GPU (Metal)".to_string(), 0));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let name = stdout
-        .lines()
-        .find(|l| l.trim_start().starts_with("Chipset Model:"))
-        .and_then(|l| l.split(':').nth(1))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "Apple GPU".to_string());
-
-    // Apple Silicon uses unified memory — report total system RAM
-    let sys = sysinfo::System::new_all();
-    let unified_ram_mb = sys.total_memory() / (1024 * 1024);
-
-    Some((format!("{} (Metal)", name), unified_ram_mb))
 }
 
 /// Find the llama-server binary. Returns (exe_path, exe_directory).
@@ -1510,183 +1351,4 @@ fn find_llama_server(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
         "llama-server not found. Reinstall the app or add llama-server to your system PATH."
             .into(),
     )
-}
-
-#[cfg(not(target_os = "macos"))]
-fn detect_nvidia_gpu() -> Option<(String, u64)> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().next()?.trim().to_string();
-    // Format: "NVIDIA GeForce RTX 4090, 24564"
-    let mut parts = line.splitn(2, ',');
-    let name = parts.next()?.trim().to_string();
-    let vram: u64 = parts.next()?.trim().parse().unwrap_or(0);
-
-    if name.is_empty() {
-        return None;
-    }
-    Some((name, vram))
-}
-
-fn describe_exit_code(code: Option<i32>) -> String {
-    match code {
-        // 0xC0000135 = STATUS_DLL_NOT_FOUND (Windows)
-        Some(-1073741515) => {
-            "llama-server failed: Required DLL not found. \
-             Please install NVIDIA CUDA Toolkit 12.x or ensure CUDA drivers are up to date."
-                .to_string()
-        }
-        // 0xC0000005 = ACCESS_VIOLATION
-        Some(-1073741819) => {
-            "llama-server crashed: Access violation. \
-             Try reducing GPU layers (gpu_layers=0 for CPU-only mode)."
-                .to_string()
-        }
-        Some(c) => format!("llama-server exited with code {}", c),
-        None => "llama-server was terminated by signal".to_string(),
-    }
-}
-
-/// Kill any process listening on the given port. Returns a description of what was killed.
-/// Only kills llama-server processes to avoid accidentally killing unrelated services.
-fn kill_process_on_port(port: u16) -> Option<String> {
-    #[cfg(unix)]
-    {
-        // lsof -ti :<port> returns PIDs listening on the port
-        let output = std::process::Command::new("lsof")
-            .args(["-ti", &format!(":{}", port)])
-            .output()
-            .ok()?;
-
-        let pids_str = String::from_utf8_lossy(&output.stdout);
-        let pids: Vec<&str> = pids_str.trim().lines().collect();
-        if pids.is_empty() {
-            return None;
-        }
-
-        let mut killed = Vec::new();
-        for pid in &pids {
-            let pid = pid.trim();
-            if pid.is_empty() {
-                continue;
-            }
-            // Check process name before killing — only kill llama-server
-            let ps_out = std::process::Command::new("ps")
-                .args(["-p", pid, "-o", "comm="])
-                .output()
-                .ok();
-            let proc_name = ps_out
-                .as_ref()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_default();
-
-            if proc_name.contains("llama-server") || proc_name.contains("llama_server") {
-                let _ = std::process::Command::new("kill")
-                    .args(["-9", pid])
-                    .output();
-                killed.push(format!("PID {} ({})", pid, proc_name));
-            } else {
-                log::warn!(
-                    "Port {} held by non-llama process: PID {} ({}), skipping",
-                    port, pid, proc_name
-                );
-            }
-        }
-
-        if killed.is_empty() {
-            None
-        } else {
-            Some(killed.join(", "))
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        // netstat -ano | findstr :<port>
-        let output = std::process::Command::new("cmd")
-            .args(["/C", &format!("netstat -ano | findstr :{}", port)])
-            .output()
-            .ok()?;
-
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut killed = Vec::new();
-
-        for line in text.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 5 && parts[1].contains(&format!(":{}", port)) {
-                let pid = parts[4];
-                // Check if it's llama-server before killing
-                let tasklist = std::process::Command::new("tasklist")
-                    .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-                    .output()
-                    .ok();
-                let proc_name = tasklist
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                    .unwrap_or_default();
-
-                if proc_name.to_lowercase().contains("llama-server") || proc_name.to_lowercase().contains("llama_server") {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/PID", pid])
-                        .output();
-                    killed.push(format!("PID {}", pid));
-                } else {
-                    log::warn!("Port {} held by non-llama process: PID {}, skipping", port, pid);
-                }
-            }
-        }
-
-        if killed.is_empty() {
-            None
-        } else {
-            Some(killed.join(", "))
-        }
-    }
-}
-
-/// Discover the machine's LAN IP by connecting a UDP socket to a remote address.
-/// The OS picks the correct local interface without actually sending data.
-fn get_local_ip() -> Option<String> {
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    // Connect to a public IP — no data is sent, just determines the route
-    socket.connect("8.8.8.8:80").ok()?;
-    let addr = socket.local_addr().ok()?;
-    let ip = addr.ip().to_string();
-    // Don't return loopback
-    if ip == "127.0.0.1" || ip == "::1" {
-        return None;
-    }
-    Some(ip)
-}
-
-fn mask_sensitive_data(line: &str) -> String {
-    let bytes = line.as_bytes();
-    let len = bytes.len();
-    let mut result = String::with_capacity(len);
-    let mut i = 0;
-    while i < len {
-        if i + 66 <= len && bytes[i] == b'0' && bytes[i + 1] == b'x' {
-            let candidate = &line[i + 2..i + 66];
-            if candidate.chars().all(|c| c.is_ascii_hexdigit()) {
-                result.push_str(&line[i..i + 6]);
-                result.push_str("****...****");
-                result.push_str(&line[i + 62..i + 66]);
-                i += 66;
-                continue;
-            }
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
 }

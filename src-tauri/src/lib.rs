@@ -1,12 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-mod chain;
 mod commands;
 mod inference;
 mod model;
-mod oracle;
-mod relay;
 
 use commands::agent::{AgentState, SharedAgentState};
 

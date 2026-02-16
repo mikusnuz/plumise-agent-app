@@ -18,6 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.4", features = [] }
 
 [dependencies]
+plumise-agent-core = { path = "../crates/core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
@@ -28,15 +29,3 @@ tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 sysinfo = "0.33"
-k256 = { version = "0.13", features = ["ecdsa"] }
-sha3 = "0.10"
-hex = "0.4"
-keyring = "3.6"
-regex = "1.11"
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
-futures-util = "0.3"
-url = "2"
-tokio-util = { version = "0.7", features = ["io"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

@@ -124,16 +124,5 @@ pub async fn start_rpc_server(
 /// Stop the rpc-server process.
 pub fn stop_rpc_server(pid: u32) {
     log::info!("Stopping rpc-server PID: {}", pid);
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/F", "/PID", &pid.to_string()]);
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-        let _ = cmd.output();
-    }
+    plumise_agent_core::system::kill_pid(pid);
 }

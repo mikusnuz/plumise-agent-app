@@ -40,7 +40,7 @@ fn default_gpu_layers() -> i32 {
     99
 }
 fn default_ctx_size() -> u32 {
-    8192
+    32768
 }
 fn default_parallel_slots() -> u32 {
     1

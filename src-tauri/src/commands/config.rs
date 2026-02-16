@@ -68,7 +68,7 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             chain_rpc: "https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0".to_string(),
             http_port: 18920,
             gpu_layers: 99,
-            ctx_size: 8192,
+            ctx_size: 32768,
             parallel_slots: 1,
             ram_limit_gb: 0,
         });
@@ -102,6 +102,12 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
     if config.parallel_slots == 4 && config.ctx_size <= 8192 {
         log::info!("Migrating parallel_slots from 4 to 1 (was causing context overflow)");
         config.parallel_slots = 1;
+    }
+
+    // Migration: ctx_size 8192 was too small for multi-turn conversations
+    if config.ctx_size == 8192 {
+        log::info!("Migrating ctx_size from 8192 to 32768 (multi-turn conversations need more context)");
+        config.ctx_size = 32768;
     }
 
     // Migration: node-1.plumise.com → plug.plumise.com

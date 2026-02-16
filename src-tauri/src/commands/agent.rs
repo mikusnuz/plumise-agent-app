@@ -669,6 +669,20 @@ async fn on_agent_ready(
         sys.total_memory() / (1024 * 1024)
     };
 
+    // Run benchmark
+    let benchmark_tok_per_sec = match crate::inference::benchmark::run_benchmark(client, config.http_port).await {
+        Ok(tps) => {
+            log::info!("Benchmark result: {:.2} tok/s", tps);
+            let _ = app.emit("agent-log", format!("Benchmark: {:.2} tok/s", tps));
+            tps
+        }
+        Err(e) => {
+            log::warn!("Benchmark failed (using default): {}", e);
+            let _ = app.emit("agent-log", format!("Benchmark skipped: {}", e));
+            0.0
+        }
+    };
+
     match oracle::registry::register(
         client,
         &config.oracle_url,
@@ -679,6 +693,7 @@ async fn on_agent_ready(
         0,
         &config.device,
         &local_ip,
+        benchmark_tok_per_sec,
     )
     .await
     {
@@ -710,6 +725,7 @@ async fn on_agent_ready(
             vram_mb: 0,
             device: config.device.clone(),
             external_ip: local_ip.clone(),
+            benchmark_tok_per_sec,
         },
     );
 

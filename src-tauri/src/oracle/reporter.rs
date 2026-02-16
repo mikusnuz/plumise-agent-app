@@ -12,6 +12,7 @@ pub struct RegistrationParams {
     pub vram_mb: u64,
     pub device: String,
     pub external_ip: String,
+    pub benchmark_tok_per_sec: f64,
 }
 
 /// Start a background metrics reporter task (60s interval).
@@ -50,6 +51,7 @@ pub fn start_reporter(
                     registration.vram_mb,
                     &registration.device,
                     &registration.external_ip,
+                    registration.benchmark_tok_per_sec,
                 )
                 .await
                 {

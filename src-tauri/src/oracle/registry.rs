@@ -15,6 +15,7 @@ pub async fn register(
     vram_mb: u64,
     device: &str,
     external_ip: &str,
+    benchmark_tok_per_sec: f64,
 ) -> Result<(), String> {
     let address = address_from_key(signing_key);
     let timestamp = std::time::SystemTime::now()
@@ -55,6 +56,8 @@ pub async fn register(
         capabilities: Vec<String>,
         timestamp: u64,
         signature: String,
+        #[serde(rename = "benchmarkTokPerSec")]
+        benchmark_tok_per_sec: f64,
     }
 
     let payload = RegisterPayload {
@@ -63,6 +66,7 @@ pub async fn register(
         capabilities,
         timestamp,
         signature,
+        benchmark_tok_per_sec,
     };
 
     let url = format!("{}/api/nodes/register", oracle_url.trim_end_matches('/'));

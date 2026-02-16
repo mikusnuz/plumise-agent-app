@@ -30,6 +30,10 @@ pub struct AgentConfig {
     pub parallel_slots: u32,
     #[serde(default = "default_ram_limit_gb")]
     pub ram_limit_gb: u32,
+    #[serde(default = "default_distributed_mode")]
+    pub distributed_mode: String, // "auto" | "standalone" | "disabled"
+    #[serde(default = "default_rpc_port")]
+    pub rpc_port: u16,
     // inference_api_url is auto-derived from oracle_url, no config needed
 }
 
@@ -47,6 +51,30 @@ fn default_parallel_slots() -> u32 {
 }
 fn default_ram_limit_gb() -> u32 {
     0 // 0 = auto (no limit)
+}
+fn default_distributed_mode() -> String {
+    "auto".to_string()
+}
+fn default_rpc_port() -> u16 {
+    50052
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeMode {
+    Standalone,
+    RpcServer,
+    Coordinator,
+}
+
+impl std::fmt::Display for NodeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeMode::Standalone => write!(f, "standalone"),
+            NodeMode::RpcServer => write!(f, "rpc-server"),
+            NodeMode::Coordinator => write!(f, "coordinator"),
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -75,6 +103,8 @@ pub struct AgentMetricsResponse {
     pub total_tokens: u64,
     pub total_requests: u64,
     pub tps: f64,
+    pub node_mode: String,
+    pub cluster_id: Option<String>,
 }
 
 // ---- State ----
@@ -87,6 +117,9 @@ pub struct AgentState {
     pub background_tasks: Vec<tokio::task::JoinHandle<()>>,
     pub model_path: Option<PathBuf>,
     pub agent_address: Option<String>,
+    pub node_mode: NodeMode,
+    pub cluster_id: Option<String>,
+    pub rpc_server_pid: Option<u32>,
 }
 
 impl Default for AgentState {
@@ -99,6 +132,9 @@ impl Default for AgentState {
             background_tasks: Vec::new(),
             model_path: None,
             agent_address: None,
+            node_mode: NodeMode::Standalone,
+            cluster_id: None,
+            rpc_server_pid: None,
         }
     }
 }
@@ -385,8 +421,17 @@ pub async fn start_agent(config: AgentConfig, app: AppHandle) -> Result<(), Stri
                     if guard.status != AgentStatus::Stopped
                         && guard.status != AgentStatus::Stopping
                     {
+                        if guard.node_mode == NodeMode::Coordinator {
+                            log::warn!("Coordinator llama-server crashed — likely RPC peer disconnected");
+                            let _ = app_exit.emit("agent-log", LogEvent {
+                                level: "WARNING".to_string(),
+                                message: "Distributed inference pipeline failed. Cluster will be reassigned on next registration.".to_string(),
+                            });
+                        }
                         guard.status = AgentStatus::Error;
                         guard.pid = None;
+                        guard.node_mode = NodeMode::Standalone;
+                        guard.cluster_id = None;
                         let _ = app_exit.emit("agent-status", AgentStatusEvent {
                             status: AgentStatus::Error,
                         });
@@ -427,8 +472,18 @@ async fn handle_sidecar_events(
                 log::warn!("llama-server terminated: code={:?}", payload.code);
                 let mut guard = state.lock().await;
                 if guard.status != AgentStatus::Stopped && guard.status != AgentStatus::Stopping {
+                    // If coordinator mode crashed (likely RPC peer loss), log specific message
+                    if guard.node_mode == NodeMode::Coordinator {
+                        log::warn!("Coordinator llama-server crashed — likely RPC peer disconnected");
+                        let _ = app.emit("agent-log", LogEvent {
+                            level: "WARNING".to_string(),
+                            message: "Distributed inference pipeline failed. Cluster will be reassigned on next registration.".to_string(),
+                        });
+                    }
                     guard.status = AgentStatus::Error;
                     guard.pid = None;
+                    guard.node_mode = NodeMode::Standalone;
+                    guard.cluster_id = None;
                     let _ = app.emit("agent-status", AgentStatusEvent {
                         status: AgentStatus::Error,
                     });
@@ -466,14 +521,20 @@ pub async fn stop_agent(app: AppHandle) -> Result<(), String> {
         }
     }
 
-    // Force kill process
+    // Force kill process(es)
     {
         let mut guard = state.lock().await;
         if let Some(pid) = guard.pid.take() {
             kill_pid(pid);
         }
+        // Also kill rpc-server if running
+        if let Some(rpc_pid) = guard.rpc_server_pid.take() {
+            crate::inference::rpc_server::stop_rpc_server(rpc_pid);
+        }
         guard.status = AgentStatus::Stopped;
         guard.start_time = None;
+        guard.node_mode = NodeMode::Standalone;
+        guard.cluster_id = None;
     }
 
     let _ = app.emit("agent-status", AgentStatusEvent {
@@ -499,7 +560,7 @@ pub async fn get_agent_status(
 pub async fn get_agent_metrics(
     state: tauri::State<'_, SharedAgentState>,
 ) -> Result<AgentMetricsResponse, String> {
-    let (http_port, model_path, agent_address, uptime, status) = {
+    let (http_port, model_path, agent_address, uptime, status, node_mode, cluster_id) = {
         let guard = state.lock().await;
         (
             guard.http_port,
@@ -507,6 +568,8 @@ pub async fn get_agent_metrics(
             guard.agent_address.clone().unwrap_or_default(),
             guard.start_time.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0),
             guard.status.clone(),
+            guard.node_mode.to_string(),
+            guard.cluster_id.clone(),
         )
     };
 
@@ -519,6 +582,8 @@ pub async fn get_agent_metrics(
             total_tokens: 0,
             total_requests: 0,
             tps: 0.0,
+            node_mode: "standalone".to_string(),
+            cluster_id: None,
         });
     }
 
@@ -541,6 +606,8 @@ pub async fn get_agent_metrics(
         total_tokens: metrics.total_tokens,
         total_requests: metrics.total_requests,
         tps: metrics.tps,
+        node_mode,
+        cluster_id,
     })
 }
 
@@ -683,6 +750,9 @@ async fn on_agent_ready(
         }
     };
 
+    // Determine if distributed inference is enabled
+    let can_distribute = config.distributed_mode != "disabled";
+
     match oracle::registry::register(
         client,
         &config.oracle_url,
@@ -694,14 +764,101 @@ async fn on_agent_ready(
         &config.device,
         &local_ip,
         benchmark_tok_per_sec,
+        can_distribute,
+        &local_ip,
     )
     .await
     {
-        Ok(()) => {
+        Ok(assignment) => {
+            let mode_str = assignment.as_ref().map(|a| a.mode.as_str()).unwrap_or("standalone");
             let _ = app.emit("agent-log", LogEvent {
                 level: "INFO".to_string(),
-                message: "Registered with Oracle as standalone node".to_string(),
+                message: format!("Registered with Oracle (mode: {})", mode_str),
             });
+
+            // Apply mode-aware logic based on Oracle assignment
+            let effective_mode = if config.distributed_mode == "standalone" {
+                "standalone" // User forced standalone
+            } else {
+                mode_str
+            };
+
+            match effective_mode {
+                "rpc-server" => {
+                    // RPC Server mode: stop llama-server, start rpc-server
+                    let _ = app.emit("agent-log", LogEvent {
+                        level: "INFO".to_string(),
+                        message: "Switching to RPC Server mode for distributed inference".to_string(),
+                    });
+
+                    // Kill llama-server
+                    {
+                        let mut guard = state.lock().await;
+                        if let Some(pid) = guard.pid.take() {
+                            kill_pid(pid);
+                        }
+                    }
+
+                    let rpc_port = assignment.as_ref()
+                        .map(|a| a.rpc_port)
+                        .unwrap_or(config.rpc_port);
+
+                    // Start rpc-server
+                    match crate::inference::rpc_server::start_rpc_server(
+                        app, state, rpc_port, config.gpu_layers,
+                    ).await {
+                        Ok(rpc_pid) => {
+                            let mut guard = state.lock().await;
+                            guard.rpc_server_pid = Some(rpc_pid);
+                            guard.node_mode = NodeMode::RpcServer;
+                            guard.cluster_id = assignment.as_ref().and_then(|a| a.cluster_id.clone());
+
+                            let _ = app.emit("agent-log", LogEvent {
+                                level: "INFO".to_string(),
+                                message: format!("RPC server started on port {} (PID: {})", rpc_port, rpc_pid),
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to start rpc-server: {}", e);
+                            let _ = app.emit("agent-log", LogEvent {
+                                level: "ERROR".to_string(),
+                                message: format!("Failed to start rpc-server: {}. Falling back to standalone.", e),
+                            });
+                        }
+                    }
+                }
+                "coordinator" => {
+                    // Coordinator mode: restart llama-server with --rpc peers
+                    let peers = assignment.as_ref()
+                        .and_then(|a| a.rpc_peers.as_ref())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    if peers.is_empty() {
+                        log::warn!("Coordinator mode but no rpc peers, staying standalone");
+                        let _ = app.emit("agent-log", LogEvent {
+                            level: "WARNING".to_string(),
+                            message: "Coordinator mode but no peers yet, running as standalone".to_string(),
+                        });
+                    } else {
+                        let _ = app.emit("agent-log", LogEvent {
+                            level: "INFO".to_string(),
+                            message: format!("Restarting as coordinator with {} RPC peers", peers.len()),
+                        });
+
+                        restart_as_coordinator(state, app, config, &peers).await;
+
+                        let mut guard = state.lock().await;
+                        guard.node_mode = NodeMode::Coordinator;
+                        guard.cluster_id = assignment.as_ref().and_then(|a| a.cluster_id.clone());
+                    }
+                }
+                _ => {
+                    // Standalone mode: keep llama-server running as-is
+                    let mut guard = state.lock().await;
+                    guard.node_mode = NodeMode::Standalone;
+                }
+            }
         }
         Err(e) => {
             log::warn!("Oracle registration failed (non-fatal): {}", e);
@@ -726,37 +883,177 @@ async fn on_agent_ready(
             device: config.device.clone(),
             external_ip: local_ip.clone(),
             benchmark_tok_per_sec,
+            can_distribute,
+            lan_ip: local_ip.clone(),
         },
     );
 
     let mut guard = state.lock().await;
     guard.background_tasks.push(reporter_handle);
 
-    // 4. Start WebSocket relay — auto-derive from oracle URL
-    //    e.g. https://plug.plumise.com/oracle → wss://plug.plumise.com/ws/agent-relay
-    let relay_base = config.oracle_url.trim_end_matches('/');
-    let relay_base = if relay_base.ends_with("/oracle") {
-        relay_base.trim_end_matches("/oracle")
-    } else {
-        relay_base
+    // Only start WS relay if NOT in rpc-server mode (rpc-servers don't serve requests)
+    if guard.node_mode != NodeMode::RpcServer {
+        let relay_base = config.oracle_url.trim_end_matches('/');
+        let relay_base = if relay_base.ends_with("/oracle") {
+            relay_base.trim_end_matches("/oracle")
+        } else {
+            relay_base
+        };
+        let ws_base = relay_base
+            .replace("https://", "wss://")
+            .replace("http://", "ws://");
+        let ws_url = format!("{}/ws/agent-relay", ws_base);
+
+        let _ = app.emit("agent-log", LogEvent {
+            level: "INFO".to_string(),
+            message: format!("Connecting to inference relay: {}", ws_url),
+        });
+
+        let relay_handle = crate::relay::client::start_relay(
+            ws_url,
+            signing_key.clone(),
+            oracle_model.to_string(),
+            config.http_port,
+        );
+        guard.background_tasks.push(relay_handle);
+    }
+}
+
+/// Restart llama-server with --rpc flag connecting to distributed RPC peers.
+async fn restart_as_coordinator(
+    state: &SharedAgentState,
+    app: &AppHandle,
+    config: &AgentConfig,
+    rpc_peers: &[String],
+) {
+    // 1. Kill current llama-server
+    {
+        let mut guard = state.lock().await;
+        if let Some(pid) = guard.pid.take() {
+            kill_pid(pid);
+        }
+        guard.status = AgentStatus::Starting;
+    }
+
+    // Brief pause for port release
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // 2. Build rpc argument: "host1:port1,host2:port2,..."
+    let rpc_arg = rpc_peers.join(",");
+    log::info!("Restarting llama-server as coordinator with --rpc {}", rpc_arg);
+
+    // 3. Get model path from state
+    let model_path = {
+        let guard = state.lock().await;
+        guard.model_path.clone()
     };
-    let ws_base = relay_base
-        .replace("https://", "wss://")
-        .replace("http://", "ws://");
-    let ws_url = format!("{}/ws/agent-relay", ws_base);
 
-    let _ = app.emit("agent-log", LogEvent {
-        level: "INFO".to_string(),
-        message: format!("Connecting to inference relay: {}", ws_url),
-    });
+    let model_path = match model_path {
+        Some(p) => p,
+        None => {
+            log::error!("No model path available for coordinator restart");
+            return;
+        }
+    };
 
-    let relay_handle = crate::relay::client::start_relay(
-        ws_url,
-        signing_key.clone(),
-        oracle_model.to_string(),
-        config.http_port,
-    );
-    guard.background_tasks.push(relay_handle);
+    // 4. Build args with --rpc
+    let args: Vec<String> = vec![
+        "-m".into(),
+        model_path.to_string_lossy().to_string(),
+        "--host".into(),
+        "0.0.0.0".into(),
+        "--port".into(),
+        config.http_port.to_string(),
+        "-ngl".into(),
+        config.gpu_layers.to_string(),
+        "--ctx-size".into(),
+        config.ctx_size.to_string(),
+        "-np".into(),
+        config.parallel_slots.to_string(),
+        "--jinja".into(),
+        "--rpc".into(),
+        rpc_arg,
+    ];
+
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    // 5. Resolve backend directory
+    let backend_path = {
+        let mut dirs = Vec::new();
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            dirs.push(resource_dir.to_string_lossy().to_string());
+            let bin_dir = resource_dir.join("binaries");
+            if bin_dir.is_dir() {
+                dirs.push(bin_dir.to_string_lossy().to_string());
+            }
+        }
+        dirs.join(if cfg!(windows) { ";" } else { ":" })
+    };
+
+    // 6. Spawn sidecar
+    let spawn_result = app
+        .shell()
+        .sidecar("llama-server")
+        .and_then(|cmd| {
+            Ok(cmd.args(&args_ref).envs([
+                ("GGML_BACKEND_DIR".to_string(), backend_path.clone()),
+            ]))
+        })
+        .and_then(|cmd| cmd.spawn());
+
+    match spawn_result {
+        Ok((rx, child)) => {
+            let pid = child.pid();
+            log::info!("llama-server (coordinator) spawned, PID: {}", pid);
+
+            let mut guard = state.lock().await;
+            guard.pid = Some(pid);
+            drop(guard);
+
+            // Handle events
+            let state_ev = Arc::clone(state);
+            let app_ev = app.clone();
+            tokio::spawn(async move {
+                handle_sidecar_events(rx, state_ev, app_ev).await;
+            });
+
+            // Poll health to confirm readiness
+            let health_url = format!("http://127.0.0.1:{}/health", config.http_port);
+            let client = reqwest::Client::new();
+            let mut attempts = 0;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                attempts += 1;
+                if attempts > 60 { // 3 min timeout
+                    log::error!("Coordinator llama-server failed to become ready");
+                    break;
+                }
+                if let Ok(resp) = client.get(&health_url).send().await {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if body["status"].as_str() == Some("ok") {
+                            let mut guard = state.lock().await;
+                            guard.status = AgentStatus::Running;
+                            let _ = app.emit("agent-status", AgentStatusEvent {
+                                status: AgentStatus::Running,
+                            });
+                            let _ = app.emit("agent-log", LogEvent {
+                                level: "INFO".to_string(),
+                                message: format!("Coordinator ready with {} RPC peers", rpc_peers.len()),
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to spawn coordinator llama-server: {}", e);
+            let _ = app.emit("agent-log", LogEvent {
+                level: "ERROR".to_string(),
+                message: format!("Failed to restart as coordinator: {}", e),
+            });
+        }
+    }
 }
 
 // ---- Pre-flight Check ----

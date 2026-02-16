@@ -13,6 +13,8 @@ pub struct RegistrationParams {
     pub device: String,
     pub external_ip: String,
     pub benchmark_tok_per_sec: f64,
+    pub can_distribute: bool,
+    pub lan_ip: String,
 }
 
 /// Start a background metrics reporter task (60s interval).
@@ -52,11 +54,17 @@ pub fn start_reporter(
                     &registration.device,
                     &registration.external_ip,
                     registration.benchmark_tok_per_sec,
+                    registration.can_distribute,
+                    &registration.lan_ip,
                 )
                 .await
                 {
-                    Ok(()) => {
-                        log::debug!("Periodic re-registration successful");
+                    Ok(assignment) => {
+                        log::debug!(
+                            "Periodic re-registration successful (mode: {})",
+                            assignment.as_ref().map(|a| a.mode.as_str()).unwrap_or("standalone")
+                        );
+                        // TODO: Detect mode transition and trigger switch
                     }
                     Err(e) => {
                         log::warn!("Periodic re-registration failed: {}", e);

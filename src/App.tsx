@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
 import { useAgentProcess } from './hooks/useAgentProcess';
-import type { AgentConfig } from './types';
+import type { AgentConfig, NodeMode } from './types';
 import { DEFAULT_CONFIG } from './types';
 
 function isValidPrivateKey(key: string): boolean {
@@ -21,7 +21,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 }
 
 export default function App() {
-  const { status, metrics, health, logs, loadingProgress, start, stop, clearLogs } = useAgentProcess();
+  const { status, metrics, health, logs, loadingProgress, nodeMode, clusterId, start, stop, clearLogs } = useAgentProcess();
   const configRef = useRef<AgentConfig>(DEFAULT_CONFIG);
   const [hasPrivateKey, setHasPrivateKey] = useState(false);
 
@@ -79,6 +79,8 @@ export default function App() {
                 logs={logs}
                 hasPrivateKey={hasPrivateKey}
                 loadingProgress={loadingProgress}
+                nodeMode={nodeMode}
+                clusterId={clusterId}
                 onStart={handleStart}
                 onStop={stop}
               />

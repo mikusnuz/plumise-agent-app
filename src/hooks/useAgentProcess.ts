@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { AgentStatus, AgentConfig, LogEntry, AgentMetrics, AgentHealth } from '../types';
+import type { AgentStatus, AgentConfig, LogEntry, AgentMetrics, AgentHealth, NodeMode } from '../types';
 
 // --- Tauri API loading (awaitable) ---
 let invokePromise: Promise<typeof import('@tauri-apps/api/core')['invoke']> | null = null;
@@ -37,6 +37,8 @@ export function useAgentProcess() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingProgress, setLoadingProgress] = useState<{ percent: number; phase: string; downloadedBytes?: number; totalBytes?: number } | null>(null);
+  const [nodeMode, setNodeMode] = useState<NodeMode>('standalone');
+  const [clusterId, setClusterId] = useState<string | null>(null);
   const logIdRef = useRef(0);
   const pollRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -85,13 +87,16 @@ export function useAgentProcess() {
             totalTokens: number;
             totalRequests: number;
             tps: number;
+            nodeMode: string;
+            clusterId: string | null;
           };
 
           if (m.status === 'ok') {
+            const mode = (m.nodeMode || 'standalone') as NodeMode;
             setHealth({
               status: 'ok',
               model: m.model,
-              mode: 'standalone',
+              mode,
               address: m.address,
               uptime: m.uptime,
             });
@@ -102,6 +107,8 @@ export function useAgentProcess() {
               tokensPerSecond: m.tps,
               uptimeSeconds: Math.floor(m.uptime),
             });
+            setNodeMode(mode);
+            setClusterId(m.clusterId || null);
           }
         } else {
           // Browser fallback: poll llama-server /health directly
@@ -279,5 +286,5 @@ export function useAgentProcess() {
     logIdRef.current = 0;
   }, []);
 
-  return { status, metrics, health, logs, loadingProgress, start, stop, addLog, clearLogs };
+  return { status, metrics, health, logs, loadingProgress, nodeMode, clusterId, start, stop, addLog, clearLogs };
 }

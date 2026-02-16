@@ -37,7 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/llama-server"],
+    "externalBin": ["binaries/llama-server", "binaries/rpc-server"],
     "resources": [],
     "windows": {}
   },

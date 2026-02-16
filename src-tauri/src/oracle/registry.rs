@@ -1,10 +1,27 @@
 use k256::ecdsa::SigningKey;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use crate::chain::crypto::{address_from_key, personal_sign};
 
+/// Cluster assignment returned by Oracle on registration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterAssignment {
+    pub mode: String,            // "standalone" | "rpc-server" | "coordinator"
+    pub cluster_id: Option<String>,
+    pub rpc_port: u16,
+    pub rpc_peers: Option<Vec<String>>, // coordinator only: ["192.168.0.101:50052", ...]
+}
+
+/// Registration response from Oracle
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterResponse {
+    pub success: bool,
+    pub message: String,
+    pub assignment: Option<ClusterAssignment>,
+}
+
 /// Register this node with the Oracle as a standalone inference node.
-/// Uses /api/nodes/register (NOT /api/v1/pipeline/register) because
-/// agent-app is a standalone llama-server node, not a gRPC pipeline participant.
+/// Returns the cluster assignment if Oracle assigns us to a cluster.
 pub async fn register(
     client: &reqwest::Client,
     oracle_url: &str,
@@ -16,7 +33,9 @@ pub async fn register(
     device: &str,
     external_ip: &str,
     benchmark_tok_per_sec: f64,
-) -> Result<(), String> {
+    can_distribute: bool,
+    lan_ip: &str,
+) -> Result<Option<ClusterAssignment>, String> {
     let address = address_from_key(signing_key);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -27,7 +46,6 @@ pub async fn register(
     let capabilities = vec!["inference".to_string(), model.to_string()];
 
     // Field order MUST match Oracle's NodesService.verifyRegistrationSignature
-    // which signs: JSON.stringify({ address, endpoint, capabilities, timestamp })
     #[derive(Serialize)]
     struct SignData {
         address: String,
@@ -43,21 +61,22 @@ pub async fn register(
         timestamp,
     };
 
-    // Compact JSON — matches Oracle's JSON.stringify()
     let message = serde_json::to_string(&sign_data)
         .map_err(|e| format!("JSON serialize error: {}", e))?;
     let signature = personal_sign(&message, signing_key)?;
 
-    // Build payload
+    // Build payload with distributed inference fields
     #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
     struct RegisterPayload {
         address: String,
         endpoint: String,
         capabilities: Vec<String>,
         timestamp: u64,
         signature: String,
-        #[serde(rename = "benchmarkTokPerSec")]
         benchmark_tok_per_sec: f64,
+        lan_ip: String,
+        can_distribute: bool,
     }
 
     let payload = RegisterPayload {
@@ -67,6 +86,8 @@ pub async fn register(
         timestamp,
         signature,
         benchmark_tok_per_sec,
+        lan_ip: lan_ip.to_string(),
+        can_distribute,
     };
 
     let url = format!("{}/api/nodes/register", oracle_url.trim_end_matches('/'));
@@ -80,16 +101,16 @@ pub async fn register(
         .map_err(|e| format!("Oracle register request failed: {}", e))?;
 
     if resp.status().is_success() {
-        let data: serde_json::Value = resp
+        let data: RegisterResponse = resp
             .json()
             .await
             .map_err(|e| format!("Oracle response parse error: {}", e))?;
-        if data.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-            log::info!("Registered with Oracle as standalone node");
-            Ok(())
+
+        if data.success {
+            log::info!("Registered with Oracle (assignment: {:?})", data.assignment);
+            Ok(data.assignment)
         } else {
-            let msg = data["message"].as_str().unwrap_or("unknown");
-            Err(format!("Oracle registration rejected: {}", msg))
+            Err(format!("Oracle registration rejected: {}", data.message))
         }
     } else {
         let status = resp.status();

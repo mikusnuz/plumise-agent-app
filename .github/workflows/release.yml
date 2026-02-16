@@ -40,6 +40,15 @@ jobs:
           Copy-Item $serverExe.FullName "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
           Write-Host "llama-server: $($serverExe.FullName)"
 
+          # rpc-server for distributed inference
+          $rpcExe = Get-ChildItem -Recurse llama-bin -Filter "rpc-server.exe" | Select-Object -First 1
+          if (-not $rpcExe) {
+            Write-Error "rpc-server.exe not found!"
+            exit 1
+          }
+          Copy-Item $rpcExe.FullName "src-tauri/binaries/rpc-server-x86_64-pc-windows-msvc.exe"
+          Write-Host "rpc-server: $($rpcExe.FullName)"
+
           # Copy DLLs to src-tauri/ root (bundled as resources next to sidecar)
           $serverDir = $serverExe.DirectoryName
           Get-ChildItem "$serverDir/*.dll" | ForEach-Object {
@@ -133,6 +142,16 @@ jobs:
 
           SIZE_MB=$(du -m "src-tauri/binaries/llama-server-aarch64-apple-darwin" | cut -f1)
           echo "llama-server: $SIZE_MB MB"
+
+          # rpc-server for distributed inference
+          RPC_BIN=$(find llama-bin -name "rpc-server" -type f | head -1)
+          if [ -z "$RPC_BIN" ]; then
+            echo "ERROR: rpc-server not found!"
+            exit 1
+          fi
+          cp "$RPC_BIN" src-tauri/binaries/rpc-server-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/rpc-server-aarch64-apple-darwin
+          echo "rpc-server: $(du -m src-tauri/binaries/rpc-server-aarch64-apple-darwin | cut -f1) MB"
 
           # Copy dylibs with short names (e.g., libmtmd.0.dylib) by following symlinks
           echo "Copying dylibs..."

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Zap, Hash, Clock, Gauge, Cpu, HardDrive,
+  Zap, Hash, Clock, Gauge, Cpu, HardDrive, Network,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -8,7 +8,7 @@ import {
 import StatCard from '../components/dashboard/StatCard';
 import GaugeRing from '../components/dashboard/GaugeRing';
 import ProcessControl from '../components/dashboard/ProcessControl';
-import type { AgentStatus, AgentMetrics, AgentHealth, LogEntry } from '../types';
+import type { AgentStatus, AgentMetrics, AgentHealth, LogEntry, NodeMode } from '../types';
 import { useSystemInfo } from '../hooks/useSystemInfo';
 
 interface DashboardProps {
@@ -18,9 +18,17 @@ interface DashboardProps {
   logs: LogEntry[];
   hasPrivateKey: boolean;
   loadingProgress?: { percent: number; phase: string } | null;
+  nodeMode: NodeMode;
+  clusterId: string | null;
   onStart: () => void;
   onStop: () => void;
 }
+
+const NODE_MODE_LABELS: Record<NodeMode, { label: string; description: string; color: string }> = {
+  standalone: { label: 'Standalone', description: 'Running full model independently', color: '#4ade80' },
+  'rpc-server': { label: 'RPC Server', description: 'Providing compute to cluster', color: '#06b6d4' },
+  coordinator: { label: 'Coordinator', description: 'Orchestrating distributed inference', color: '#8b5cf6' },
+};
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -45,7 +53,7 @@ function generateMockChartData() {
   }));
 }
 
-export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, loadingProgress, onStart, onStop }: DashboardProps) {
+export default function Dashboard({ status, metrics, health, logs, hasPrivateKey, loadingProgress, nodeMode, clusterId, onStart, onStop }: DashboardProps) {
   const chartData = useMemo(generateMockChartData, []);
 
   // Smooth uptime counter: interpolate between 3-second server polls
@@ -103,6 +111,29 @@ export default function Dashboard({ status, metrics, health, logs, hasPrivateKey
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
       {/* Process Control */}
       <ProcessControl status={status} hasPrivateKey={hasPrivateKey} loadingProgress={loadingProgress} onStart={onStart} onStop={onStop} />
+
+      {/* Node Mode Badge */}
+      {status === 'running' && (
+        <div className="glass-card px-4 py-2.5 flex items-center gap-3">
+          <Network size={14} style={{ color: NODE_MODE_LABELS[nodeMode].color }} />
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs font-semibold"
+              style={{ color: NODE_MODE_LABELS[nodeMode].color }}
+            >
+              {NODE_MODE_LABELS[nodeMode].label}
+            </span>
+            <span className="text-[10px] text-[var(--text-dim)]">
+              {NODE_MODE_LABELS[nodeMode].description}
+            </span>
+          </div>
+          {clusterId && (
+            <span className="ml-auto text-[10px] font-mono text-[var(--text-dim)]">
+              Cluster: {clusterId.slice(0, 12)}...
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-4 gap-4">

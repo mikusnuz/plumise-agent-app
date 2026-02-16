@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Eye, EyeOff, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Save, Eye, EyeOff, RotateCcw, ChevronDown, ChevronRight, Network } from 'lucide-react';
 import type { AgentConfig, AgentStatus } from '../types';
 import { DEFAULT_CONFIG } from '../types';
 
@@ -287,6 +287,56 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
               <span>Auto</span>
               <span>{Math.floor(systemRamGb / 2)} GB</span>
               <span>{systemRamGb} GB</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Distributed Inference */}
+        <section className="glass-card p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Network size={14} className="text-[var(--accent)]" />
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Distributed Inference</h3>
+          </div>
+          <p className="text-[10px] text-[var(--text-dim)] -mt-2">
+            When enabled, your node can collaborate with nearby nodes to run large models that no single machine can handle alone.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                Mode
+              </label>
+              <select
+                className="input-field"
+                value={config.distributedMode}
+                onChange={(e) => update('distributedMode', e.target.value as AgentConfig['distributedMode'])}
+                disabled={isRunning}
+              >
+                <option value="auto">Auto (Oracle decides)</option>
+                <option value="standalone">Standalone Only</option>
+                <option value="disabled">Disabled</option>
+              </select>
+              <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                Auto: Oracle assigns optimal mode based on network
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
+                RPC Port
+              </label>
+              <input
+                type="number"
+                className="input-field w-32"
+                value={config.rpcPort}
+                onChange={(e) => update('rpcPort', parseInt(e.target.value) || 50052)}
+                disabled={isRunning || config.distributedMode === 'disabled'}
+                min={1024}
+                max={65535}
+              />
+              <p className="text-[10px] text-[var(--text-dim)] mt-1">
+                Port for ggml-rpc server (default: 50052)
+              </p>
             </div>
           </div>
         </section>

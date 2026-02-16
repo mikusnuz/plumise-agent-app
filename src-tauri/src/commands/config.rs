@@ -71,6 +71,8 @@ pub async fn load_config(app: tauri::AppHandle) -> Result<AgentConfig, String> {
             ctx_size: 32768,
             parallel_slots: 1,
             ram_limit_gb: 0,
+            distributed_mode: "auto".to_string(),
+            rpc_port: 50052,
         });
     }
 

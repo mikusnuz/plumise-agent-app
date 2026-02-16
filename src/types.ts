@@ -1,5 +1,14 @@
 export type AgentStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
 
+export type NodeMode = 'standalone' | 'rpc-server' | 'coordinator';
+
+export interface ClusterAssignment {
+  mode: NodeMode;
+  clusterId: string | null;
+  rpcPort: number;
+  rpcPeers: string[] | null; // coordinator only
+}
+
 export interface AgentMetrics {
   totalRequests: number;
   totalTokensProcessed: number;
@@ -45,6 +54,8 @@ export interface AgentConfig {
   ctxSize: number;
   parallelSlots: number;
   ramLimitGb: number;
+  distributedMode: 'auto' | 'standalone' | 'disabled';
+  rpcPort: number;
 }
 
 export interface LogEntry {
@@ -66,4 +77,6 @@ export const DEFAULT_CONFIG: AgentConfig = {
   ctxSize: 8192,
   parallelSlots: 1,
   ramLimitGb: 0,
+  distributedMode: 'auto',
+  rpcPort: 50052,
 };

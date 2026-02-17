@@ -71,7 +71,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   modelFile: 'Qwen3-32B-Q4_K_M.gguf',
   device: 'auto',
   oracleUrl: 'https://plug.plumise.com/oracle',
-  chainRpc: 'https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0',
+  chainRpc: 'https://plug.plumise.com/rpc/plug_live_6VuDzRY1lNoA2noX0lSPGQlm9itOF9td4Jvvd4eAMzE',
   httpPort: 18920,
   gpuLayers: 99,
   ctxSize: 8192,

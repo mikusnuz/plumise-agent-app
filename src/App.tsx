@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
 import { useAgentProcess } from './hooks/useAgentProcess';
-import type { AgentConfig, NodeMode } from './types';
+import type { AgentConfig } from './types';
 import { DEFAULT_CONFIG } from './types';
 
 function isValidPrivateKey(key: string): boolean {

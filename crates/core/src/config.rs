@@ -27,7 +27,7 @@ pub struct AgentConfig {
 }
 
 fn default_model_file() -> String {
-    "gpt-oss-20b-mxfp4.gguf".to_string()
+    "Qwen3-32B-Q4_K_M.gguf".to_string()
 }
 fn default_gpu_layers() -> i32 {
     99
@@ -52,7 +52,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             private_key: String::new(),
-            model: "ggml-org/gpt-oss-20b-GGUF".to_string(),
+            model: "Qwen/Qwen3-32B-GGUF".to_string(),
             model_file: default_model_file(),
             device: "auto".to_string(),
             oracle_url: "https://plug.plumise.com/oracle".to_string(),
@@ -123,13 +123,11 @@ pub fn load_config(dir: &Path) -> Result<AgentConfig, String> {
         log::info!("Migrating http_port from old default 8080 to 18920");
         config.http_port = 18920;
     }
-    if config.model == "openai/gpt-oss-20b" {
-        log::info!("Migrating model from openai/gpt-oss-20b to ggml-org/gpt-oss-20b-GGUF");
-        config.model = "ggml-org/gpt-oss-20b-GGUF".to_string();
-    }
-    if config.model_file == "gpt-oss-20b-MXFP4.gguf" {
-        log::info!("Migrating model_file case: MXFP4 -> mxfp4");
-        config.model_file = "gpt-oss-20b-mxfp4.gguf".to_string();
+    // Migrate old gpt-oss-20b models to Qwen3-32B
+    if config.model.contains("gpt-oss-20b") {
+        log::info!("Migrating model from {} to Qwen/Qwen3-32B-GGUF", config.model);
+        config.model = "Qwen/Qwen3-32B-GGUF".to_string();
+        config.model_file = "Qwen3-32B-Q4_K_M.gguf".to_string();
     }
     if config.parallel_slots == 4 && config.ctx_size <= 8192 {
         log::info!("Migrating parallel_slots from 4 to 1");
@@ -173,6 +171,15 @@ pub fn load_config(dir: &Path) -> Result<AgentConfig, String> {
 
     log::info!("Config loaded from {:?}", path);
     Ok(config)
+}
+
+/// Map HuggingFace GGUF repo to oracle model ID.
+pub fn oracle_model_name(gguf_repo: &str) -> &'static str {
+    match gguf_repo {
+        s if s.contains("Qwen3-32B") => "qwen/qwen3-32b",
+        s if s.contains("Qwen3.5-397B") || s.contains("qwen3.5-397b") => "qwen/qwen3.5-397b-a17b",
+        _ => "qwen/qwen3-32b", // fallback
+    }
 }
 
 /// Get the default config directory for CLI usage.

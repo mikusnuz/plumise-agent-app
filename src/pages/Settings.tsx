@@ -203,7 +203,7 @@ export default function Settings({ status, onConfigChange }: SettingsProps) {
                 onChange={(e) => update('model', e.target.value)}
                 disabled={isRunning}
               >
-                <option value="ggml-org/gpt-oss-20b-GGUF">gpt-oss-20b GGUF (12GB)</option>
+                <option value="Qwen/Qwen3-32B-GGUF">Qwen3 32B GGUF (~20GB)</option>
               </select>
             </div>
 

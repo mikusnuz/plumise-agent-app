@@ -67,8 +67,8 @@ export interface LogEntry {
 
 export const DEFAULT_CONFIG: AgentConfig = {
   privateKey: '',
-  model: 'ggml-org/gpt-oss-20b-GGUF',
-  modelFile: 'gpt-oss-20b-mxfp4.gguf',
+  model: 'Qwen/Qwen3-32B-GGUF',
+  modelFile: 'Qwen3-32B-Q4_K_M.gguf',
   device: 'auto',
   oracleUrl: 'https://plug.plumise.com/oracle',
   chainRpc: 'https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0',

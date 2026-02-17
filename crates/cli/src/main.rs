@@ -235,7 +235,7 @@ async fn cmd_start(
     let local_ip = core::system::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
     log::info!("Local endpoint: http://{}:{}", local_ip, config.http_port);
 
-    let oracle_model = "openai/gpt-oss-20b";
+    let oracle_model = core::config::oracle_model_name(&config.model);
 
     // RAM
     let ram_mb = if config.ram_limit_gb > 0 {

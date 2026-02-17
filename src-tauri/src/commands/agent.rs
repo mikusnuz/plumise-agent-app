@@ -676,9 +676,8 @@ async fn on_agent_ready(
         message: format!("Local endpoint: http://{}:{}", local_ip, config.http_port),
     });
 
-    // Oracle model name must match what inference API queries (openai/gpt-oss-20b)
-    // config.model is the HuggingFace repo for download (ggml-org/gpt-oss-20b-GGUF)
-    let oracle_model = "openai/gpt-oss-20b";
+    // Map HuggingFace GGUF repo name to oracle model ID
+    let oracle_model = plumise_agent_core::config::oracle_model_name(&config.model);
 
     // 1. Oracle registration (Oracle will sponsor on-chain registration if needed)
     let ram_mb = if config.ram_limit_gb > 0 {

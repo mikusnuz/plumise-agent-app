@@ -56,7 +56,7 @@ impl Default for AgentConfig {
             model_file: default_model_file(),
             device: "auto".to_string(),
             oracle_url: "https://plug.plumise.com/oracle".to_string(),
-            chain_rpc: "https://plug.plumise.com/rpc/plug_live_6VuDzRY1lNoA2noX0lSPGQlm9itOF9td4Jvvd4eAMzE".to_string(),
+            chain_rpc: "https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0".to_string(),
             http_port: 18920,
             gpu_layers: default_gpu_layers(),
             ctx_size: default_ctx_size(),
@@ -141,9 +141,9 @@ pub fn load_config(dir: &Path) -> Result<AgentConfig, String> {
         log::info!("Migrating oracle_url to plug.plumise.com");
         config.oracle_url = "https://plug.plumise.com/oracle".to_string();
     }
-    if config.chain_rpc.contains("node-1.plumise.com") || config.chain_rpc.contains("plug_live_w9mS7DOAqMGlhyYwhLa8MOE") {
-        log::info!("Migrating chain_rpc to new Plug API key");
-        config.chain_rpc = "https://plug.plumise.com/rpc/plug_live_6VuDzRY1lNoA2noX0lSPGQlm9itOF9td4Jvvd4eAMzE".to_string();
+    if config.chain_rpc.contains("node-1.plumise.com") {
+        log::info!("Migrating chain_rpc to plug.plumise.com");
+        config.chain_rpc = "https://plug.plumise.com/rpc/plug_live_w9mS7DOAqMGlhyYwhLa8MOE-7UZfbKwCT34ib8JLZL0".to_string();
     }
 
     // Private key: try keyring first, fall back to JSON

@@ -1,5 +1,7 @@
 # Plumise Agent
 
+[![GitHub release](https://img.shields.io/github/v/release/mikusnuz/plumise-agent-app)](https://github.com/mikusnuz/plumise-agent-app/releases)
+
 Desktop application for running a Plumise network inference agent. One-click setup to contribute your GPU/CPU computing power to the Plumise decentralized inference network and earn PLM rewards.
 
 ## Features

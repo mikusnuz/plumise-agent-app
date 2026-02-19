@@ -2,6 +2,8 @@
 
 # Plumise Agent
 
+[![GitHub release](https://img.shields.io/github/v/release/mikusnuz/plumise-agent-app)](https://github.com/mikusnuz/plumise-agent-app/releases)
+
 Plumise 네트워크 추론 에이전트를 실행하기 위한 데스크톱 애플리케이션입니다. 원클릭 설정으로 GPU/CPU 컴퓨팅 파워를 Plumise 분산 추론 네트워크에 기여하고 PLM 보상을 획득합니다.
 
 ## 기능
